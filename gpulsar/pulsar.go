@@ -2,7 +2,6 @@ package gpulsar
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -10,13 +9,15 @@ import (
 	"github.com/apache/pulsar-client-go/pulsar"
 
 	"github.com/go-god/broker"
+	"github.com/go-god/broker/backoff"
 )
 
 type pulsarImpl struct {
-	client       pulsar.Client
-	logger       broker.Logger
-	stop         chan struct{}
-	gracefulWait time.Duration
+	client        pulsar.Client
+	logger        broker.Logger
+	stop          chan struct{}
+	gracefulWait  time.Duration
+	noDataWaitSec int
 }
 
 var _ broker.Broker = (*pulsarImpl)(nil)
@@ -61,9 +62,13 @@ func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 
 	// parse message
 	var payload []byte
-	payload, err = p.parseMessage(msg)
+	payload, err = broker.ParseMessage(msg)
 	if err != nil {
 		return err
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	var msgID pulsar.MessageID
@@ -78,29 +83,19 @@ func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 	return nil
 }
 
-func (p *pulsarImpl) parseMessage(msg interface{}) ([]byte, error) {
-	if s, ok := msg.(string); ok {
-		return []byte(s), nil
-	}
-
-	return json.Marshal(msg)
-}
-
 // Subscribe subscribe message
 func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string,
 	handler broker.SubHandler, opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
 		SubType:            broker.Shared, // default Shared
-		ConcurrencySize:    1,
+		ConcurrencySize:    1,             // default:1
 		MessageChannelSize: 100,
-		GracefulWait:       5 * time.Second,
 	}
 
 	for _, o := range opts {
 		o(&opt)
 	}
 
-	p.gracefulWait = opt.GracefulWait
 	if channel != "" {
 		opt.Name = channel
 	}
@@ -143,10 +138,9 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 					select {
 					case <-ticker.C:
 						err := p.handler(ctx, topic, opt.Name, consumer, handler)
-						p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
+						p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
 					case <-p.stop:
 						return
-					default:
 					}
 				}
 			} else {
@@ -162,7 +156,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 						case cm := <-msgChannel:
 							msg := cm.Message
 							if err := p.consumerMsg(ctx, topic, opt.Name, msg, handler); err != nil {
-								p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
+								p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
 								continue
 							}
 							consumer.Ack(msg)
@@ -175,7 +169,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 							return
 						default:
 							err := p.handler(ctx, topic, opt.Name, consumer, handler)
-							p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
+							p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
 						}
 					}
 				}
@@ -194,6 +188,7 @@ func (p *pulsarImpl) handler(ctx context.Context, topic string, channel string,
 	consumer pulsar.Consumer, handler broker.SubHandler) error {
 	msg, err := consumer.Receive(ctx)
 	if err != nil {
+		backoff.Sleep(p.noDataWaitSec)
 		return err
 	}
 
@@ -264,12 +259,21 @@ func New(opts ...broker.Option) broker.Broker {
 		ConnectionTimeout:       30 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		Logger:                  broker.DummyLogger,
+		NoDataWaitSec:           3, // default:3
+		// graceful exit time
+		GracefulWait: 5 * time.Second,
 	}
 	for _, o := range opts {
 		o(&opt)
 	}
 
-	p := &pulsarImpl{logger: opt.Logger}
+	p := &pulsarImpl{
+		logger:        opt.Logger,
+		noDataWaitSec: opt.NoDataWaitSec,
+		gracefulWait:  5 * time.Second,
+		stop:          make(chan struct{}, 1),
+	}
+
 	if len(opt.Addrs) == 0 {
 		panic("pulsar address is empty")
 	}

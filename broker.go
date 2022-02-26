@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 )
 
 // Broker broker interface
@@ -16,3 +17,12 @@ type Broker interface {
 
 // SubHandler subscribe func
 type SubHandler func(ctx context.Context, data []byte) error
+
+// ParseMessage parse msg
+func ParseMessage(msg interface{}) ([]byte, error) {
+	if s, ok := msg.(string); ok {
+		return []byte(s), nil
+	}
+
+	return json.Marshal(msg)
+}

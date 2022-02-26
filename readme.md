@@ -19,4 +19,4 @@ https://pulsar.apache.org/docs/zh-CN/client-libraries-go/
 
 # usage
 
-    For specific usage, refer to gpulsar test
+    For specific usage, refer to gpulsar/gredis test

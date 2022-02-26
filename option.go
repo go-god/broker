@@ -25,6 +25,16 @@ type Options struct {
 	// that will kept in the pool. (Default: 1 connection)
 	MaxConnectionsPerBroker int
 
+	// =======redis mq================
+	RedisConf *RedisConf
+
+	// graceful exit time
+	GracefulWait time.Duration
+
+	// no data wait second
+	NoDataWaitSec int
+
+	// Logger logger
 	Logger Logger
 }
 
@@ -88,6 +98,20 @@ func WithConnectionTimeout(t time.Duration) Option {
 func WithMaxConnectionsPerBroker(num int) Option {
 	return func(o *Options) {
 		o.MaxConnectionsPerBroker = num
+	}
+}
+
+// WithGracefulWait set sub graceful exit time
+func WithGracefulWait(t time.Duration) Option {
+	return func(s *Options) {
+		s.GracefulWait = t
+	}
+}
+
+// WithNoDataWaitSec no data wait second
+func WithNoDataWaitSec(sec int) Option {
+	return func(o *Options) {
+		o.NoDataWaitSec = sec
 	}
 }
 
@@ -166,9 +190,6 @@ type SubscribeOptions struct {
 	// specifies the consumer name
 	Name string
 
-	// graceful exit subscribe time
-	GracefulWait time.Duration
-
 	// Receive messages from channel. The channel returns a struct which contains message and the consumer from where
 	// the message was received. It's not necessary here since we have 1 single consumer, but the channel could be
 	// shared across multiple consumers as well
@@ -218,13 +239,6 @@ type SubscribeOptions struct {
 func WithSubName(name string) SubOption {
 	return func(s *SubscribeOptions) {
 		s.Name = name
-	}
-}
-
-// WithSubGracefulWait set sub graceful exit time
-func WithSubGracefulWait(t time.Duration) SubOption {
-	return func(s *SubscribeOptions) {
-		s.GracefulWait = t
 	}
 }
 
