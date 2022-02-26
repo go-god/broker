@@ -76,6 +76,7 @@ func TestPulsarConsumer(t *testing.T) {
 
 		// receive msg
 		log.Printf("Received message msgId: %#v -- content: '%s'\n", msg.ID(), string(msg.Payload()))
+		consumer.Ack(msg)
 	}
 }
 

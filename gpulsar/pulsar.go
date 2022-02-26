@@ -156,7 +156,9 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 							msg := cm.Message
 							if err := p.consumerMsg(ctx, topic, opt.Name, msg, handler); err != nil {
 								p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
+								continue
 							}
+							consumer.Ack(msg)
 						}
 					}
 				} else {
@@ -188,7 +190,15 @@ func (p *pulsarImpl) handler(ctx context.Context, topic string, channel string,
 		return err
 	}
 
-	return p.consumerMsg(ctx, topic, channel, msg, handler)
+	err = p.consumerMsg(ctx, topic, channel, msg, handler)
+	if err != nil {
+		return err
+	}
+
+	// send ack
+	consumer.Ack(msg)
+
+	return nil
 }
 
 func (p *pulsarImpl) consumerMsg(ctx context.Context, topic string, channel string,
