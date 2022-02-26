@@ -14,6 +14,9 @@
     apachepulsar/pulsar:2.7.4 \
     bin/pulsar standalone
 
+# pulsar-go
+https://pulsar.apache.org/docs/zh-CN/client-libraries-go/
+
 # usage
 
     For specific usage, refer to gpulsar test
