@@ -3,6 +3,7 @@ package gpulsar
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -23,6 +24,12 @@ var _ broker.Broker = (*pulsarImpl)(nil)
 // Publish publish message to topic
 func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 	opts ...broker.PubOption) error {
+	select {
+	case <-p.stop:
+		return errors.New("broker has stopped")
+	default:
+	}
+
 	// publish options
 	opt := broker.PublishOptions{
 		SendTimeout: 30 * time.Second,
