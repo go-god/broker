@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	cluster "github.com/bsm/sarama-cluster"
 
 	"github.com/go-god/broker"
 	"github.com/go-god/broker/backoff"
@@ -14,8 +13,6 @@ import (
 
 type kafkaImpl struct {
 	client       sarama.Client
-	config       *sarama.Config
-	addrs        []string
 	logger       broker.Logger
 	stop         chan struct{}
 	gracefulWait time.Duration
@@ -70,13 +67,12 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 }
 
 // Subscribe subscribe message from topic + channel
-func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string, handler broker.SubHandler,
+func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string, handler broker.SubHandler,
 	opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
 		SubType:         broker.Shared, // default:Shared
 		ConcurrencySize: 1,             // default:1
-		Name:            channel,
-		Offset:          sarama.OffsetNewest,
+		Name:            groupID,       // group_id
 	}
 
 	for _, o := range opts {
@@ -89,28 +85,16 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 
 	k.logger.Printf("subscribe message from kafka receive topic:%v channel:%v msg...\n", topic, opt.Name)
 
-	// init (custom) config, set mode to ConsumerModePartitions
-	c := cluster.NewConfig()
-	c.Group.Mode = cluster.ConsumerModePartitions
-	c.Config = *k.config
-	c.Consumer.Offsets.Initial = opt.Offset
-	c.Consumer.Offsets.AutoCommit.Enable = true
-	c.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
-	c.Consumer.Offsets.CommitInterval = 1 * time.Second
-
-	topics := []string{topic}
-	consumer, err := cluster.NewConsumer(k.addrs, opt.Name, topics, c) // init consumer
+	consumerGroup, err := sarama.NewConsumerGroupFromClient(opt.Name, k.client)
 	if err != nil {
 		return err
 	}
-
 	defer func() {
-		_ = consumer.Close()
+		_ = consumerGroup.Close()
 	}()
 
-	k.watchNotifications(consumer) // consume notifications
-
 	done := make(chan struct{}, opt.ConcurrencySize)
+	topics := []string{topic}
 	for i := 0; i < opt.ConcurrencySize; i++ {
 		go func() {
 			defer broker.Recovery(k.logger)
@@ -118,36 +102,39 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 				done <- struct{}{}
 			}()
 
-			// consume partitions
+			consumerHandler := &consumerGroupHandler{
+				ctx:     ctx,
+				topic:   topic,
+				name:    opt.Name,
+				logger:  k.logger,
+				handler: handler,
+			}
 			for {
 				select {
-				case part, ok := <-consumer.Partitions():
-					if !ok {
-						return
-					}
-
-					// start a separate goroutine to consume messages
-					go func(pc cluster.PartitionConsumer) {
-						defer broker.Recovery(k.logger)
-						for msg := range pc.Messages() {
-							k.logger.Printf(
-								"kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
-								msg.Topic, opt.Name, msg.Partition, msg.Offset, msg.Key, msg.Value)
-							if err := handler(ctx, msg.Value); err != nil {
-								k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-									topic, opt.Name, err)
-								continue
-							}
-
-							consumer.MarkOffset(msg, "") // mark message as processed
-						}
-					}(part)
-				case err := <-consumer.Errors():
+				case <-k.stop:
+					return
+				case <-ctx.Done(): // cancel ctx
+					k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+						topic, opt.Name, ctx.Err())
+					return
+				case err := <-consumerGroup.Errors():
 					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
 						topic, opt.Name, err)
 					backoff.Sleep(1)
-				case <-k.stop:
-					return
+				default:
+					// Consume() should be called continuously in an infinite loop
+					// Because Consume() needs to be executed again after each rebalance to restore the connection
+					// The Join Group request is not initiated until the Consume starts. If the current consumer
+					// becomes the leader of the consumer group after joining, the rebalance process will also be
+					// performed to re-allocate
+					// The topics and partitions that each consumer group in the group needs to consume,
+					// and the consumption starts after the last Sync Group
+					err := consumerGroup.Consume(ctx, topics, consumerHandler)
+					if err != nil {
+						k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+							topic, opt.Name, err)
+						continue
+					}
 				}
 			}
 		}()
@@ -158,15 +145,6 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 	}
 
 	return nil
-}
-
-// consume notifications
-func (k *kafkaImpl) watchNotifications(consumer *cluster.Consumer) {
-	go func() {
-		for ntf := range consumer.Notifications() {
-			k.logger.Printf("kafka rebalanced: %+v\n", ntf)
-		}
-	}()
 }
 
 func (k *kafkaImpl) gracefulStop(ctx context.Context) {
@@ -234,21 +212,23 @@ func New(opts ...broker.Option) broker.Broker {
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 	config.Producer.Timeout = opt.OperationTimeout
+
+	// consumer config
+	config.Consumer.Return.Errors = true
+	config.Consumer.Offsets.AutoCommit.Enable = true
+	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
 	if opt.User != "" { // user/pwd auth
 		config.Net.SASL.Enable = true
 		config.Net.SASL.User = opt.User
 		config.Net.SASL.Password = opt.Password
 	}
-	k.config = config
 
 	// create kafka client
 	var err error
-	k.client, err = sarama.NewClient(opt.Addrs, k.config)
+	k.client, err = sarama.NewClient(opt.Addrs, config)
 	if err != nil {
 		panic("could not connection kafka client:" + err.Error())
 	}
-
-	k.addrs = opt.Addrs
 
 	return k
 }

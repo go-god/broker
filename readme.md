@@ -20,3 +20,5 @@ https://pulsar.apache.org/docs/zh-CN/client-libraries-go/
 # usage
 
     For specific usage, refer to gpulsar/gredis test
+    kafka consumer groups require Version to be >= V0_10_2_0
+    if lower than V0_10_2_0, please use go-god/broker v1.1.1
