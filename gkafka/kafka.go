@@ -87,7 +87,7 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 		ctx = context.Background()
 	}
 
-	k.logger.Printf("subscribe message from kafka receive topic:%v channel:%v msg...", topic, opt.Name)
+	k.logger.Printf("subscribe message from kafka receive topic:%v channel:%v msg...\n", topic, opt.Name)
 
 	// init (custom) config, set mode to ConsumerModePartitions
 	c := cluster.NewConfig()
@@ -130,10 +130,11 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 					go func(pc cluster.PartitionConsumer) {
 						defer broker.Recovery(k.logger)
 						for msg := range pc.Messages() {
-							k.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s",
+							k.logger.Printf(
+								"kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
 								msg.Topic, opt.Name, msg.Partition, msg.Offset, msg.Key, msg.Value)
 							if err := handler(ctx, msg.Value); err != nil {
-								k.logger.Printf("received topic:%v channel:%v handler msg err:%v",
+								k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
 									topic, opt.Name, err)
 								continue
 							}
@@ -142,7 +143,7 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 						}
 					}(part)
 				case err := <-consumer.Errors():
-					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v",
+					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
 						topic, opt.Name, err)
 					backoff.Sleep(1)
 				case <-k.stop:
