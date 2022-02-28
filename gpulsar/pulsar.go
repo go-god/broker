@@ -79,7 +79,7 @@ func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 		return err
 	}
 
-	p.logger.Printf("message id:%v partitionIdx:%v", msgID.EntryID(), msgID.PartitionIdx())
+	p.logger.Printf("message id:%v partitionIdx:%v\n", msgID.EntryID(), msgID.PartitionIdx())
 	return nil
 }
 
@@ -89,22 +89,27 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	opt := broker.SubscribeOptions{
 		SubType:            broker.Shared, // default Shared
 		ConcurrencySize:    1,             // default:1
-		MessageChannelSize: 100,
+		MessageChannelSize: 100,           // message channel size,default:100
+		ReceiverQueueSize:  10000,         // default:10000
+		Name:               channel,
 	}
 
 	for _, o := range opts {
 		o(&opt)
 	}
 
-	if channel != "" {
-		opt.Name = channel
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
+	p.logger.Printf("subscribe message from pulsar receive topic:%v channel:%v msg...", topic, opt.Name)
+
 	consumer, err := p.client.Subscribe(pulsar.ConsumerOptions{
-		Topic:            topic,
-		SubscriptionName: opt.Name,
-		Type:             pulsar.SubscriptionType(opt.SubType),
-		RetryEnable:      opt.RetryEnable,
+		Topic:             topic,
+		SubscriptionName:  opt.Name,
+		Type:              pulsar.SubscriptionType(opt.SubType),
+		RetryEnable:       opt.RetryEnable,
+		ReceiverQueueSize: opt.ReceiverQueueSize,
 	})
 
 	var msgChannel chan pulsar.ConsumerMessage
@@ -116,16 +121,12 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	if err != nil {
 		return err
 	}
-
 	defer consumer.Close()
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
 
 	done := make(chan struct{}, opt.ConcurrencySize)
 	for i := 0; i < opt.ConcurrencySize; i++ {
 		go func() {
+			defer broker.Recovery(p.logger)
 			defer func() {
 				done <- struct{}{}
 			}()
@@ -137,8 +138,9 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 				for {
 					select {
 					case <-ticker.C:
-						err := p.handler(ctx, topic, opt.Name, consumer, handler)
-						p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
+						if err := p.handler(ctx, topic, opt.Name, consumer, handler); err != nil {
+							p.logger.Printf("received topic:%v channel:%v handler msg err:%v\n", topic, opt.Name, err)
+						}
 					case <-p.stop:
 						return
 					}
@@ -156,9 +158,11 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 						case cm := <-msgChannel:
 							msg := cm.Message
 							if err := p.consumerMsg(ctx, topic, opt.Name, msg, handler); err != nil {
-								p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
+								p.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+									topic, opt.Name, err)
 								continue
 							}
+
 							consumer.Ack(msg)
 						}
 					}
@@ -168,8 +172,10 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 						case <-p.stop:
 							return
 						default:
-							err := p.handler(ctx, topic, opt.Name, consumer, handler)
-							p.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, opt.Name, err)
+							if err := p.handler(ctx, topic, opt.Name, consumer, handler); err != nil {
+								p.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+									topic, opt.Name, err)
+							}
 						}
 					}
 				}
@@ -205,14 +211,12 @@ func (p *pulsarImpl) handler(ctx context.Context, topic string, channel string,
 
 func (p *pulsarImpl) consumerMsg(ctx context.Context, topic string, channel string,
 	msg pulsar.Message, handler broker.SubHandler) error {
-	msgBytes := msg.Payload()
-	p.logger.Printf("received topic:%v channel:%v message msgId: %#v -- content: '%s'\n", topic, channel,
-		msg.ID(), string(msgBytes))
-	if err := handler(ctx, msgBytes); err != nil {
-		return err
-	}
+	defer broker.Recovery(p.logger)
 
-	return nil
+	msgBytes := msg.Payload()
+	p.logger.Printf("pulsar received topic:%v channel:%v message msgId: %#v -- value: `%s`\n", topic, channel,
+		msg.ID(), string(msgBytes))
+	return handler(ctx, msgBytes)
 }
 
 // gracefulStop stop subscribe msg
@@ -242,7 +246,7 @@ func (p *pulsarImpl) gracefulStop(ctx context.Context) {
 	<-done
 	<-ctx.Done()
 
-	p.logger.Printf("subscribe msg shutting down")
+	p.logger.Printf("subscribe msg shutting down\n")
 }
 
 // Shutdown graceful shutdown broker
@@ -267,15 +271,15 @@ func New(opts ...broker.Option) broker.Broker {
 		o(&opt)
 	}
 
+	if len(opt.Addrs) == 0 {
+		panic("pulsar address is empty")
+	}
+
 	p := &pulsarImpl{
 		logger:        opt.Logger,
 		noDataWaitSec: opt.NoDataWaitSec,
 		gracefulWait:  5 * time.Second,
 		stop:          make(chan struct{}, 1),
-	}
-
-	if len(opt.Addrs) == 0 {
-		panic("pulsar address is empty")
 	}
 
 	clientOpt := pulsar.ClientOptions{

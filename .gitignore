@@ -1,2 +1,4 @@
 *.txt
 *.log
+dockerconfig/kafka
+dockerconfig/zookeeper

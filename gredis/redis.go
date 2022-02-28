@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/go-redis/redis"
 
 	"github.com/go-god/broker"
@@ -31,15 +30,6 @@ func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, 
 		o(&opt)
 	}
 
-	producerOpt := pulsar.ProducerOptions{
-		Topic:       topic,
-		SendTimeout: opt.SendTimeout,
-	}
-
-	if opt.Name != "" {
-		producerOpt.Name = opt.Name
-	}
-
 	listName := topic
 	if r.prefix != "" {
 		listName = strings.Join([]string{r.prefix, listName}, ":")
@@ -62,23 +52,20 @@ func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, 
 func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string, handler broker.SubHandler,
 	opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
-		SubType:            broker.Exclusive, // default Exclusive
-		ConcurrencySize:    1,                // default:1
-		MessageChannelSize: 100,
+		SubType:         broker.Exclusive, // default:Exclusive
+		ConcurrencySize: 1,                // default:1
+		Name:            channel,
 	}
 
 	for _, o := range opts {
 		o(&opt)
 	}
 
-	if channel != "" {
-		opt.Name = channel
-	}
-
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
+	r.logger.Printf("subscribe message from redis receive topic:%v channel:%v msg...", topic, opt.Name)
 	done := make(chan struct{}, opt.ConcurrencySize)
 	for i := 0; i < opt.ConcurrencySize; i++ {
 		go func() {
@@ -123,6 +110,8 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 }
 
 func (r *redisImpl) handler(ctx context.Context, topic string, channel string, handler broker.SubHandler) error {
+	defer broker.Recovery(r.logger)
+
 	listName := topic
 	if r.prefix != "" {
 		listName = strings.Join([]string{r.prefix, listName}, ":")
@@ -140,8 +129,8 @@ func (r *redisImpl) handler(ctx context.Context, topic string, channel string, h
 	}
 
 	r.logger.Printf("received topic:%v channel:%v -- content: '%s'\n", topic, channel, string(msgBytes))
-	err = handler(ctx, msgBytes)
-	return err
+
+	return handler(ctx, msgBytes)
 }
 
 // Shutdown graceful shutdown broker
@@ -231,9 +220,9 @@ func redisClient(conf *broker.RedisConf) *redis.Client {
 		Password:     conf.Password,
 		DB:           conf.DB, // use default DB
 		MaxRetries:   conf.MaxRetries,
-		DialTimeout:  conf.DialTimeout,  // Default is 5 seconds.
-		ReadTimeout:  conf.ReadTimeout,  // Default is 3 seconds.
-		WriteTimeout: conf.WriteTimeout, // Default is ReadTimeout.
+		DialTimeout:  conf.DialTimeout,  // Default is 5 seconds
+		ReadTimeout:  conf.ReadTimeout,  // Default is 3 seconds
+		WriteTimeout: conf.WriteTimeout, // Default is ReadTimeout
 		PoolSize:     conf.PoolSize,
 		PoolTimeout:  conf.PoolTimeout,
 		MinIdleConns: conf.MinIdleConns,

@@ -18,7 +18,7 @@ func Do(attempts int) time.Duration {
 	return time.Duration(math.Pow(float64(attempts), math.E)) * time.Millisecond * 100
 }
 
-// Sleep sleep rnd * 2 + sec time
+// Sleep sleep rnd * 2 + sec time.Duration
 func Sleep(sec int) {
 	rnd := rand.Intn(3)
 	time.Sleep(Do(2*rnd + sec))

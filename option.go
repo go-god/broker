@@ -201,12 +201,6 @@ type SubscribeOptions struct {
 
 	Offset int64
 
-	// partition if sub partition
-	Partition bool
-
-	// find topic by address
-	Addrs []string
-
 	// SubInterval subscribe interval,default:0
 	SubInterval time.Duration
 
@@ -267,20 +261,6 @@ func WithSubConcurrencySize(size int) SubOption {
 func WithSubOffset(offset int64) SubOption {
 	return func(s *SubscribeOptions) {
 		s.Offset = offset
-	}
-}
-
-// WithSubPartition set sub partition
-func WithSubPartition() SubOption {
-	return func(s *SubscribeOptions) {
-		s.Partition = true
-	}
-}
-
-// WithSubAddress set sub address
-func WithSubAddress(addrs []string) SubOption {
-	return func(s *SubscribeOptions) {
-		s.Addrs = addrs
 	}
 }
 
