@@ -113,10 +113,6 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 				select {
 				case <-k.stop:
 					return
-				case <-ctx.Done(): // cancel ctx
-					k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-						topic, opt.Name, ctx.Err())
-					return
 				case err := <-consumerGroup.Errors():
 					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
 						topic, opt.Name, err)
