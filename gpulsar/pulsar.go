@@ -263,9 +263,8 @@ func New(opts ...broker.Option) broker.Broker {
 		ConnectionTimeout:       30 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		Logger:                  broker.DummyLogger,
-		NoDataWaitSec:           3, // default:3
-		// graceful exit time
-		GracefulWait: 5 * time.Second,
+		NoDataWaitSec:           3,               // default:3
+		GracefulWait:            5 * time.Second, // graceful exit time
 	}
 	for _, o := range opts {
 		o(&opt)
@@ -288,6 +287,11 @@ func New(opts ...broker.Option) broker.Broker {
 		ConnectionTimeout:       opt.ConnectionTimeout,
 		MaxConnectionsPerBroker: opt.MaxConnectionsPerBroker,
 	}
+
+	if opt.AuthToken != "" { // set pulsar auth token
+		clientOpt.Authentication = pulsar.NewAuthenticationToken(opt.AuthToken)
+	}
+
 	if opt.ListenerName != "" {
 		clientOpt.ListenerName = opt.ListenerName
 	}

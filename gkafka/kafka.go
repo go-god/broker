@@ -187,7 +187,7 @@ func New(opts ...broker.Option) broker.Broker {
 		ConnectionTimeout:       10 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		Logger:                  broker.DummyLogger,
-		GracefulWait:            5 * time.Second,
+		GracefulWait:            5 * time.Second, // graceful exit time
 	}
 	for _, o := range opts {
 		o(&opt)

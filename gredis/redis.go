@@ -174,9 +174,8 @@ func (r *redisImpl) gracefulStop(ctx context.Context) {
 func New(opts ...broker.Option) broker.Broker {
 	opt := broker.Options{
 		Logger:        broker.DummyLogger,
-		NoDataWaitSec: 3, // default:3
-		// graceful exit time
-		GracefulWait: 5 * time.Second,
+		NoDataWaitSec: 3,               // default:3
+		GracefulWait:  5 * time.Second, // graceful exit time
 	}
 	for _, o := range opts {
 		o(&opt)
