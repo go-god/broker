@@ -3,6 +3,7 @@ package gpulsar
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -119,8 +120,9 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	}
 
 	if err != nil {
-		return err
+		panic(fmt.Errorf("new pulsar consumer name:%s err:%s", opt.Name, err.Error()))
 	}
+
 	defer consumer.Close()
 
 	done := make(chan struct{}, opt.ConcurrencySize)

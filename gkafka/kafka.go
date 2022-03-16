@@ -3,6 +3,7 @@ package gkafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -87,8 +88,9 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(opt.Name, k.client)
 	if err != nil {
-		return err
+		panic(fmt.Errorf("new kafka consumer name:%s err:%s", opt.Name, err.Error()))
 	}
+
 	defer func() {
 		_ = consumerGroup.Close()
 	}()
