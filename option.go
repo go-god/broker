@@ -15,7 +15,7 @@ type Options struct {
 	// ========pulsar mq===============
 	// ListenerName Configure the net model for vpc user to connect the pulsar broker
 	ListenerName string
-	// AuthToken auth token todo impl pulsar token auth
+	// AuthToken auth token impl pulsar token auth
 	AuthToken string
 	// OperationTimeout operation timeout
 	OperationTimeout time.Duration

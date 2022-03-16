@@ -3,6 +3,7 @@ package gkafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -101,7 +102,7 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, channel string,
 	topics := []string{topic}
 	consumer, err := cluster.NewConsumer(k.addrs, opt.Name, topics, c) // init consumer
 	if err != nil {
-		return err
+		panic(fmt.Errorf("new kafka consumer name:%s err:%s", opt.Name, err.Error()))
 	}
 
 	defer func() {
