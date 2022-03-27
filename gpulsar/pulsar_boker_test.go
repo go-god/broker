@@ -15,7 +15,7 @@ func TestPulsarBrokerPublish(t *testing.T) {
 		broker.WithLogger(broker.LoggerFunc(log.Printf)),
 	)
 
-	err := b.Publish(context.Background(), "my-topic", "abc", broker.WithSendTimeout(30*time.Second))
+	err := b.Publish(context.Background(), "my-topic", `{"data":"hello"}`, broker.WithSendTimeout(30*time.Second))
 	log.Printf("publish err:%v", err)
 	_ = b.Shutdown(context.Background())
 }
