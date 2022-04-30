@@ -19,6 +19,57 @@ type kafkaImpl struct {
 	gracefulWait time.Duration
 }
 
+var _ broker.Broker = (*kafkaImpl)(nil)
+
+// New create kafka broker
+func New(opts ...broker.Option) broker.Broker {
+	opt := broker.Options{
+		OperationTimeout:        10 * time.Second,
+		ConnectionTimeout:       10 * time.Second,
+		MaxConnectionsPerBroker: 1,
+		Logger:                  broker.DummyLogger,
+		GracefulWait:            5 * time.Second, // graceful exit time
+	}
+	for _, o := range opts {
+		o(&opt)
+	}
+
+	if len(opt.Addrs) == 0 {
+		panic("kafka address is empty")
+	}
+
+	k := &kafkaImpl{
+		logger:       opt.Logger,
+		stop:         make(chan struct{}, 1),
+		gracefulWait: opt.GracefulWait,
+	}
+
+	// kafka sarama config
+	config := sarama.NewConfig()
+	config.Producer.Return.Successes = true
+	config.Producer.Return.Errors = true
+	config.Producer.Timeout = opt.OperationTimeout
+
+	// consumer config
+	config.Consumer.Return.Errors = true
+	config.Consumer.Offsets.AutoCommit.Enable = true
+	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
+	if opt.User != "" { // user/pwd auth
+		config.Net.SASL.Enable = true
+		config.Net.SASL.User = opt.User
+		config.Net.SASL.Password = opt.Password
+	}
+
+	// create kafka client
+	var err error
+	k.client, err = sarama.NewClient(opt.Addrs, config)
+	if err != nil {
+		panic("could not connection kafka client:" + err.Error())
+	}
+
+	return k
+}
+
 // Publish publish message to topic
 func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, opts ...broker.PubOption) error {
 	select {
@@ -33,23 +84,18 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 		o(&opt)
 	}
 
-	var payload []byte
+	// kafka message
 	payload, err := broker.ParseMessage(msg)
 	if err != nil {
 		return err
 	}
-
-	// send msg
 	message := &sarama.ProducerMessage{
 		Topic: topic, Key: sarama.StringEncoder(opt.Name), Value: sarama.ByteEncoder(payload),
 	}
-	var (
-		partition int32
-		offset    int64
-	)
 
+	// create producer
 	var producer sarama.SyncProducer
-	producer, err = sarama.NewSyncProducerFromClient(k.client) // default sync producer
+	producer, err = sarama.NewSyncProducerFromClient(k.client)
 	if err != nil {
 		k.logger.Printf("NewSyncProducerFromClient err:%v\n", err)
 	}
@@ -57,6 +103,11 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 		_ = producer.Close()
 	}()
 
+	// send message
+	var (
+		partition int32
+		offset    int64
+	)
 	partition, offset, err = producer.SendMessage(message)
 	if err != nil {
 		return err
@@ -145,6 +196,13 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 	return nil
 }
 
+// Shutdown graceful shutdown broker
+func (k *kafkaImpl) Shutdown(ctx context.Context) error {
+	k.gracefulStop(ctx)
+	close(k.stop)
+	return nil
+}
+
 func (k *kafkaImpl) gracefulStop(ctx context.Context) {
 	defer k.logger.Printf("subscribe msg exit successfully\n")
 
@@ -173,60 +231,4 @@ func (k *kafkaImpl) gracefulStop(ctx context.Context) {
 	<-ctx.Done()
 
 	k.logger.Printf("subscribe msg shutting down,err:%v\n", <-err)
-}
-
-// Shutdown graceful shutdown broker
-func (k *kafkaImpl) Shutdown(ctx context.Context) error {
-	k.gracefulStop(ctx)
-	close(k.stop)
-	return nil
-}
-
-// New create kafka broker
-func New(opts ...broker.Option) broker.Broker {
-	opt := broker.Options{
-		OperationTimeout:        10 * time.Second,
-		ConnectionTimeout:       10 * time.Second,
-		MaxConnectionsPerBroker: 1,
-		Logger:                  broker.DummyLogger,
-		GracefulWait:            5 * time.Second, // graceful exit time
-	}
-	for _, o := range opts {
-		o(&opt)
-	}
-
-	if len(opt.Addrs) == 0 {
-		panic("kafka address is empty")
-	}
-
-	k := &kafkaImpl{
-		logger:       opt.Logger,
-		stop:         make(chan struct{}, 1),
-		gracefulWait: opt.GracefulWait,
-	}
-
-	// kafka sarama config
-	config := sarama.NewConfig()
-	config.Producer.Return.Successes = true
-	config.Producer.Return.Errors = true
-	config.Producer.Timeout = opt.OperationTimeout
-
-	// consumer config
-	config.Consumer.Return.Errors = true
-	config.Consumer.Offsets.AutoCommit.Enable = true
-	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
-	if opt.User != "" { // user/pwd auth
-		config.Net.SASL.Enable = true
-		config.Net.SASL.User = opt.User
-		config.Net.SASL.Password = opt.Password
-	}
-
-	// create kafka client
-	var err error
-	k.client, err = sarama.NewClient(opt.Addrs, config)
-	if err != nil {
-		panic("could not connection kafka client:" + err.Error())
-	}
-
-	return k
 }

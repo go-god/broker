@@ -20,6 +20,6 @@ func Do(attempts int) time.Duration {
 
 // Sleep sleep rnd * 2 + sec time.Duration
 func Sleep(sec int) {
-	rnd := rand.Intn(3)
+	rnd := rand.Intn(2)
 	time.Sleep(Do(2*rnd + sec))
 }

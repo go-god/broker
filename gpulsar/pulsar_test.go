@@ -66,6 +66,10 @@ func TestPulsarConsumer(t *testing.T) {
 		SubscriptionName: "my-topic-sub",
 		Type:             pulsar.Shared,
 	})
+	if err != nil {
+		log.Fatalf("create consumer error:%v\n", err)
+	}
+
 	defer consumer.Close()
 
 	for {

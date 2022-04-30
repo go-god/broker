@@ -23,6 +23,57 @@ type pulsarImpl struct {
 
 var _ broker.Broker = (*pulsarImpl)(nil)
 
+// New create broker interface
+func New(opts ...broker.Option) broker.Broker {
+	opt := broker.Options{
+		OperationTimeout:        30 * time.Second,
+		ConnectionTimeout:       30 * time.Second,
+		MaxConnectionsPerBroker: 1,
+		Logger:                  broker.DummyLogger,
+		NoDataWaitSec:           3,               // default:3
+		GracefulWait:            5 * time.Second, // graceful exit time
+	}
+	for _, o := range opts {
+		o(&opt)
+	}
+
+	if len(opt.Addrs) == 0 {
+		panic("pulsar address is empty")
+	}
+
+	p := &pulsarImpl{
+		logger:        opt.Logger,
+		noDataWaitSec: opt.NoDataWaitSec,
+		gracefulWait:  5 * time.Second,
+		stop:          make(chan struct{}, 1),
+	}
+
+	clientOpt := pulsar.ClientOptions{
+		URL:                     strings.Join(opt.Addrs, ","),
+		OperationTimeout:        opt.OperationTimeout,
+		ConnectionTimeout:       opt.ConnectionTimeout,
+		MaxConnectionsPerBroker: opt.MaxConnectionsPerBroker,
+	}
+
+	if opt.AuthToken != "" { // set pulsar auth token
+		clientOpt.Authentication = pulsar.NewAuthenticationToken(opt.AuthToken)
+	}
+
+	if opt.ListenerName != "" {
+		clientOpt.ListenerName = opt.ListenerName
+	}
+
+	// create pulsar client
+	client, err := pulsar.NewClient(clientOpt)
+	if err != nil {
+		panic("could not connection pulsar client:" + err.Error())
+	}
+
+	p.client = client
+
+	return p
+}
+
 // Publish publish message to topic
 func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 	opts ...broker.PubOption) error {
@@ -104,7 +155,6 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	}
 
 	p.logger.Printf("subscribe message from pulsar receive topic:%v channel:%v msg...", topic, opt.Name)
-
 	consumer, err := p.client.Subscribe(pulsar.ConsumerOptions{
 		Topic:             topic,
 		SubscriptionName:  opt.Name,
@@ -113,17 +163,17 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 		ReceiverQueueSize: opt.ReceiverQueueSize,
 	})
 
+	if err != nil {
+		panic(fmt.Errorf("new pulsar consumer name:%s err:%v", opt.Name, err))
+	}
+
+	defer consumer.Close()
+
 	var msgChannel chan pulsar.ConsumerMessage
 	isMsgChannel := opt.MessageChannel && opt.MessageChannelSize > 0
 	if isMsgChannel {
 		msgChannel = make(chan pulsar.ConsumerMessage, opt.MessageChannelSize)
 	}
-
-	if err != nil {
-		panic(fmt.Errorf("new pulsar consumer name:%s err:%s", opt.Name, err.Error()))
-	}
-
-	defer consumer.Close()
 
 	done := make(chan struct{}, opt.ConcurrencySize)
 	for i := 0; i < opt.ConcurrencySize; i++ {
@@ -192,6 +242,13 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	return nil
 }
 
+// Shutdown graceful shutdown broker
+func (p *pulsarImpl) Shutdown(ctx context.Context) error {
+	p.gracefulStop(ctx)
+	close(p.stop)
+	return nil
+}
+
 func (p *pulsarImpl) handler(ctx context.Context, topic string, channel string,
 	consumer pulsar.Consumer, handler broker.SubHandler) error {
 	msg, err := consumer.Receive(ctx)
@@ -249,62 +306,4 @@ func (p *pulsarImpl) gracefulStop(ctx context.Context) {
 	<-ctx.Done()
 
 	p.logger.Printf("subscribe msg shutting down\n")
-}
-
-// Shutdown graceful shutdown broker
-func (p *pulsarImpl) Shutdown(ctx context.Context) error {
-	p.gracefulStop(ctx)
-	close(p.stop)
-	return nil
-}
-
-// New create broker interface
-func New(opts ...broker.Option) broker.Broker {
-	opt := broker.Options{
-		OperationTimeout:        30 * time.Second,
-		ConnectionTimeout:       30 * time.Second,
-		MaxConnectionsPerBroker: 1,
-		Logger:                  broker.DummyLogger,
-		NoDataWaitSec:           3,               // default:3
-		GracefulWait:            5 * time.Second, // graceful exit time
-	}
-	for _, o := range opts {
-		o(&opt)
-	}
-
-	if len(opt.Addrs) == 0 {
-		panic("pulsar address is empty")
-	}
-
-	p := &pulsarImpl{
-		logger:        opt.Logger,
-		noDataWaitSec: opt.NoDataWaitSec,
-		gracefulWait:  5 * time.Second,
-		stop:          make(chan struct{}, 1),
-	}
-
-	clientOpt := pulsar.ClientOptions{
-		URL:                     strings.Join(opt.Addrs, ","),
-		OperationTimeout:        opt.OperationTimeout,
-		ConnectionTimeout:       opt.ConnectionTimeout,
-		MaxConnectionsPerBroker: opt.MaxConnectionsPerBroker,
-	}
-
-	if opt.AuthToken != "" { // set pulsar auth token
-		clientOpt.Authentication = pulsar.NewAuthenticationToken(opt.AuthToken)
-	}
-
-	if opt.ListenerName != "" {
-		clientOpt.ListenerName = opt.ListenerName
-	}
-
-	// create pulsar client
-	client, err := pulsar.NewClient(clientOpt)
-	if err != nil {
-		panic("could not connection pulsar client:" + err.Error())
-	}
-
-	p.client = client
-
-	return p
 }

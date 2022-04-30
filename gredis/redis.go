@@ -20,6 +20,33 @@ type redisImpl struct {
 	noDataWaitSec int
 }
 
+// New create broker interface
+func New(opts ...broker.Option) broker.Broker {
+	opt := broker.Options{
+		Logger:        broker.DummyLogger,
+		NoDataWaitSec: 3,               // default:3
+		GracefulWait:  5 * time.Second, // graceful exit time
+	}
+	for _, o := range opts {
+		o(&opt)
+	}
+
+	if opt.RedisConf == nil {
+		panic("redis config is nil")
+	}
+
+	obj := &redisImpl{
+		client:        redisClient(opt.RedisConf),
+		prefix:        opt.Prefix,
+		logger:        opt.Logger,
+		noDataWaitSec: opt.NoDataWaitSec,
+		gracefulWait:  5 * time.Second,
+		stop:          make(chan struct{}, 1),
+	}
+
+	return obj
+}
+
 // Publish publish message to topic
 func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, opts ...broker.PubOption) error {
 	// publish options
@@ -109,6 +136,13 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 	return nil
 }
 
+// Shutdown graceful shutdown broker
+func (r *redisImpl) Shutdown(ctx context.Context) error {
+	r.gracefulStop(ctx)
+	close(r.stop)
+	return nil
+}
+
 func (r *redisImpl) handler(ctx context.Context, topic string, channel string, handler broker.SubHandler) error {
 	defer broker.Recovery(r.logger)
 
@@ -131,13 +165,6 @@ func (r *redisImpl) handler(ctx context.Context, topic string, channel string, h
 	r.logger.Printf("received topic:%v channel:%v -- content: '%s'\n", topic, channel, string(msgBytes))
 
 	return handler(ctx, msgBytes)
-}
-
-// Shutdown graceful shutdown broker
-func (r *redisImpl) Shutdown(ctx context.Context) error {
-	r.gracefulStop(ctx)
-	close(r.stop)
-	return nil
 }
 
 func (r *redisImpl) gracefulStop(ctx context.Context) {
@@ -168,33 +195,6 @@ func (r *redisImpl) gracefulStop(ctx context.Context) {
 	<-ctx.Done()
 
 	r.logger.Printf("subscribe msg shutting down,err:%v\n", <-err)
-}
-
-// New create broker interface
-func New(opts ...broker.Option) broker.Broker {
-	opt := broker.Options{
-		Logger:        broker.DummyLogger,
-		NoDataWaitSec: 3,               // default:3
-		GracefulWait:  5 * time.Second, // graceful exit time
-	}
-	for _, o := range opts {
-		o(&opt)
-	}
-
-	if opt.RedisConf == nil {
-		panic("redis config is nil")
-	}
-
-	obj := &redisImpl{
-		client:        redisClient(opt.RedisConf),
-		prefix:        opt.Prefix,
-		logger:        opt.Logger,
-		noDataWaitSec: opt.NoDataWaitSec,
-		gracefulWait:  5 * time.Second,
-		stop:          make(chan struct{}, 1),
-	}
-
-	return obj
 }
 
 func redisClient(conf *broker.RedisConf) *redis.Client {
