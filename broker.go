@@ -16,7 +16,7 @@ type Broker interface {
 }
 
 // SubHandler subscribe func
-type SubHandler func(ctx context.Context, value []byte, key ...[]byte) error
+type SubHandler func(ctx context.Context, value []byte) error
 
 // ParseMessage parse msg
 func ParseMessage(msg interface{}) ([]byte, error) {
