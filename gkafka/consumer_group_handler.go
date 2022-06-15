@@ -13,12 +13,13 @@ var _ sarama.ConsumerGroupHandler = (*consumerGroupHandler)(nil)
 // consumerGroupHandler impl sarama.ConsumerGroupHandler
 // consumer groups require Version to be >= V0_10_2_0
 type consumerGroupHandler struct {
-	ctx     context.Context
-	topic   string
-	name    string
-	key     string // message key
-	logger  broker.Logger
-	handler broker.SubHandler
+	ctx           context.Context
+	topic         string
+	name          string
+	key           string // message key
+	logger        broker.Logger
+	handler       broker.SubHandler
+	remainHandler broker.SubHandler
 }
 
 // Setup is run at the beginning of a new session, before ConsumeClaim.
@@ -41,6 +42,23 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 	for msg := range claim.Messages() {
 		if c.key != "" && c.key != string(msg.Key) {
 			c.logger.Printf("kafka sub message key:%s invalid,but msg key is empty", c.key)
+			if c.remainHandler != nil {
+				c.logger.Printf("kafka sub message will handler use remainHandler")
+				c.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
+					msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
+
+				// handler msg
+				if err := c.handlerMessage(c.ctx, c.remainHandler, msg.Value); err != nil {
+					c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+						c.topic, c.name, err)
+					continue
+				}
+
+				// mark message as processed
+				sess.MarkMessage(msg, "")
+				sess.Commit()
+			}
+
 			continue
 		}
 
@@ -48,7 +66,7 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 			msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
 
 		// handler msg
-		if err := c.handlerMsg(c.ctx, msg.Value); err != nil {
+		if err := c.handlerMessage(c.ctx, c.handler, msg.Value); err != nil {
 			c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
 				c.topic, c.name, err)
 			continue
@@ -62,8 +80,9 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 	return nil
 }
 
-// handlerMsg handler msg
-func (c *consumerGroupHandler) handlerMsg(ctx context.Context, msg []byte) error {
+// handlerMessage consumer msg
+func (c *consumerGroupHandler) handlerMessage(ctx context.Context, subHandler broker.SubHandler, msg []byte) error {
 	defer broker.Recovery(c.logger)
-	return c.handler(ctx, msg)
+
+	return subHandler(ctx, msg)
 }

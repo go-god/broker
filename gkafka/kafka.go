@@ -156,12 +156,13 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 			}()
 
 			consumerHandler := &consumerGroupHandler{
-				ctx:     ctx,
-				topic:   topic,
-				name:    opt.Name,
-				key:     opt.MessageKey, // message key
-				logger:  k.logger,
-				handler: handler,
+				ctx:           ctx,
+				topic:         topic,
+				name:          opt.Name,
+				key:           opt.MessageKey, // message key
+				logger:        k.logger,
+				handler:       handler,
+				remainHandler: opt.RemainHandler,
 			}
 
 			for {

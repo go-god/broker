@@ -195,6 +195,9 @@ type SubscribeOptions struct {
 	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
 	MessageKey string
 
+	// if kafka message key1,key2 not call this subHandler will call,if remain is not nil func
+	RemainHandler SubHandler
+
 	// Receive messages from channel. The channel returns a struct which contains message and the consumer from where
 	// the message was received. It's not necessary here since we have 1 single consumer, but the channel could be
 	// shared across multiple consumers as well
@@ -245,6 +248,13 @@ func WithSubName(name string) SubOption {
 func WithMessageKey(key string) SubOption {
 	return func(s *SubscribeOptions) {
 		s.MessageKey = key
+	}
+}
+
+// WithSubRemainHandler set sub remain subHandler
+func WithSubRemainHandler(handler SubHandler) SubOption {
+	return func(s *SubscribeOptions) {
+		s.RemainHandler = handler
 	}
 }
 
