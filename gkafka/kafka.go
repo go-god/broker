@@ -159,9 +159,11 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 				ctx:     ctx,
 				topic:   topic,
 				name:    opt.Name,
+				key:     opt.MessageKey, // message key
 				logger:  k.logger,
 				handler: handler,
 			}
+
 			for {
 				select {
 				case <-k.stop:

@@ -43,6 +43,11 @@ func TestKafkaConsumer(t *testing.T) {
 	})
 }
 
+func TestNilByteEqEmptyStr(t *testing.T) {
+	var key []byte
+	log.Println(string(key) == "")
+}
+
 /**
 === RUN   TestKafkaConsumer
 2022/02/27 22:04:29 subscribe message from kafka receive topic:my-topic channel:group-1 msg...

@@ -16,6 +16,7 @@ type consumerGroupHandler struct {
 	ctx     context.Context
 	topic   string
 	name    string
+	key     string // message key
 	logger  broker.Logger
 	handler broker.SubHandler
 }
@@ -36,7 +37,13 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 	claim sarama.ConsumerGroupClaim) error {
 	defer broker.Recovery(c.logger)
 
+	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
 	for msg := range claim.Messages() {
+		if c.key != "" && c.key != string(msg.Key) {
+			c.logger.Printf("kafka sub message key:%s invalid,but msg key is empty", c.key)
+			continue
+		}
+
 		c.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
 			msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
 

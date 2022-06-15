@@ -136,6 +136,7 @@ type PublishOptions struct {
 	// if you use pulsar mq,if not assigned, the system will generate
 	// a globally unique name which can be access with
 	// Producer.ProducerName().
+	// for kafka publish message key
 	Name string // publish name
 
 	// DisableBatching controls whether automatic batching of messages is enabled for the producer.
@@ -190,6 +191,10 @@ type SubscribeOptions struct {
 	// specifies the consumer name
 	Name string
 
+	// handler message key eg: kafka message key when consumer message
+	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
+	MessageKey string
+
 	// Receive messages from channel. The channel returns a struct which contains message and the consumer from where
 	// the message was received. It's not necessary here since we have 1 single consumer, but the channel could be
 	// shared across multiple consumers as well
@@ -233,6 +238,13 @@ type SubscribeOptions struct {
 func WithSubName(name string) SubOption {
 	return func(s *SubscribeOptions) {
 		s.Name = name
+	}
+}
+
+// WithMessageKey set sub message key
+func WithMessageKey(key string) SubOption {
+	return func(s *SubscribeOptions) {
+		s.MessageKey = key
 	}
 }
 
