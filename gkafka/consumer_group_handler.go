@@ -41,9 +41,9 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
 	for msg := range claim.Messages() {
 		if c.key != "" && c.key != string(msg.Key) {
-			c.logger.Printf("kafka sub message key:%s invalid,but msg key is empty", c.key)
+			c.logger.Printf("kafka sub message key:%s invalid,but msg key is empty\n", c.key)
 			if c.remainHandler != nil {
-				c.logger.Printf("kafka sub message will handler use remainHandler")
+				c.logger.Printf("kafka sub message will handler use remainHandler\n")
 				c.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
 					msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
 
