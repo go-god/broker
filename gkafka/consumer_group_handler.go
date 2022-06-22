@@ -2,6 +2,7 @@ package gkafka
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Shopify/sarama"
 
@@ -10,16 +11,18 @@ import (
 
 var _ sarama.ConsumerGroupHandler = (*consumerGroupHandler)(nil)
 
+// ErrSubHandlerInvalid sub handler invalid
+var ErrSubHandlerInvalid = errors.New("subHandler is nil")
+
 // consumerGroupHandler impl sarama.ConsumerGroupHandler
 // consumer groups require Version to be >= V0_10_2_0
 type consumerGroupHandler struct {
-	ctx           context.Context
-	topic         string
-	name          string
-	key           string // message key
-	logger        broker.Logger
-	handler       broker.SubHandler
-	remainHandler broker.SubHandler
+	ctx         context.Context
+	topic       string
+	name        string
+	logger      broker.Logger
+	handler     broker.SubHandler
+	keyHandlers map[string]broker.SubHandler
 }
 
 // Setup is run at the beginning of a new session, before ConsumeClaim.
@@ -40,36 +43,28 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 
 	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
 	for msg := range claim.Messages() {
-		if c.key != "" && c.key != string(msg.Key) {
-			c.logger.Printf("kafka sub message key:%s invalid,but msg key is empty\n", c.key)
-			if c.remainHandler != nil {
-				c.logger.Printf("kafka sub message will handler use remainHandler\n")
-				c.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
-					msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
-
-				// handler msg
-				if err := c.handlerMessage(c.ctx, c.remainHandler, msg.Value); err != nil {
-					c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-						c.topic, c.name, err)
-					continue
-				}
-
-				// mark message as processed
-				sess.MarkMessage(msg, "")
-				sess.Commit()
-			}
-
-			continue
-		}
-
 		c.logger.Printf("kafka received topic:%v channel:%v partition:%d offset:%d key:%s -- value:%s\n",
 			msg.Topic, c.name, msg.Partition, msg.Offset, msg.Key, msg.Value)
 
 		// handler msg
-		if err := c.handlerMessage(c.ctx, c.handler, msg.Value); err != nil {
-			c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-				c.topic, c.name, err)
-			continue
+		if handler, exist := c.keyHandlers[string(msg.Key)]; exist && handler != nil {
+			if err := c.handlerMessage(c.ctx, handler, msg.Value); err != nil {
+				c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+					c.topic, c.name, err)
+				continue
+			}
+		} else {
+			if c.handler == nil {
+				c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+					c.topic, c.name, ErrSubHandlerInvalid)
+				return ErrSubHandlerInvalid
+			}
+
+			if err := c.handlerMessage(c.ctx, c.handler, msg.Value); err != nil {
+				c.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
+					c.topic, c.name, err)
+				continue
+			}
 		}
 
 		// mark message as processed

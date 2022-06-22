@@ -191,12 +191,9 @@ type SubscribeOptions struct {
 	// specifies the consumer name
 	Name string
 
-	// handler message key eg: kafka message key when consumer message
-	// note: the message key of kafka may be nil,if c.key is not empty,it must be eq msg.key
-	MessageKey string
-
-	// if kafka message key1,key2 not call this subHandler will call,if remain is not nil func
-	RemainHandler SubHandler
+	// KeyHandlers for kafka consumer message key handler map
+	// for redis sub,you can specify different message subscriber functions to handle msg.
+	KeyHandlers map[string]SubHandler
 
 	// Receive messages from channel. The channel returns a struct which contains message and the consumer from where
 	// the message was received. It's not necessary here since we have 1 single consumer, but the channel could be
@@ -233,7 +230,7 @@ type SubscribeOptions struct {
 	// Default value is `1000` messages and should be good for most use cases.
 	ReceiverQueueSize int
 
-	// retryEnable
+	// retryEnable for pulsar sub RetryEnable
 	RetryEnable bool
 }
 
@@ -244,17 +241,10 @@ func WithSubName(name string) SubOption {
 	}
 }
 
-// WithMessageKey set sub message key
-func WithMessageKey(key string) SubOption {
+// WithSubKeyHandlers set sub key => subHandler map
+func WithSubKeyHandlers(keyHandlers map[string]SubHandler) SubOption {
 	return func(s *SubscribeOptions) {
-		s.MessageKey = key
-	}
-}
-
-// WithSubRemainHandler set sub remain subHandler
-func WithSubRemainHandler(handler SubHandler) SubOption {
-	return func(s *SubscribeOptions) {
-		s.RemainHandler = handler
+		s.KeyHandlers = keyHandlers
 	}
 }
 
@@ -293,7 +283,7 @@ func WithSubInterval(t time.Duration) SubOption {
 	}
 }
 
-// WithSubType set sub type
+// WithSubType set subType
 func WithSubType(t SubscriptionType) SubOption {
 	return func(s *SubscribeOptions) {
 		s.SubType = t

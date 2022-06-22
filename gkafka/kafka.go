@@ -156,22 +156,21 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 			}()
 
 			consumerHandler := &consumerGroupHandler{
-				ctx:           ctx,
-				topic:         topic,
-				name:          opt.Name,
-				key:           opt.MessageKey, // message key
-				logger:        k.logger,
-				handler:       handler,
-				remainHandler: opt.RemainHandler,
+				ctx:         ctx,
+				topic:       topic,
+				name:        opt.Name,
+				logger:      k.logger,
+				handler:     handler,
+				keyHandlers: opt.KeyHandlers,
 			}
 
 			for {
 				select {
 				case <-k.stop:
 					return
-				case err := <-consumerGroup.Errors():
+				case consumeErr := <-consumerGroup.Errors():
 					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
-						topic, opt.Name, err)
+						topic, opt.Name, consumeErr)
 					backoff.Sleep(1)
 				default:
 					// Consume() should be called continuously in an infinite loop
@@ -181,10 +180,10 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 					// performed to re-allocate
 					// The topics and partitions that each consumer group in the group needs to consume,
 					// and the consumption starts after the last Sync Group
-					err := consumerGroup.Consume(ctx, topics, consumerHandler)
-					if err != nil {
+					consumeErr := consumerGroup.Consume(ctx, topics, consumerHandler)
+					if consumeErr != nil {
 						k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-							topic, opt.Name, err)
+							topic, opt.Name, consumeErr)
 						continue
 					}
 				}

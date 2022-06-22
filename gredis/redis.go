@@ -17,7 +17,8 @@ type redisImpl struct {
 	logger        broker.Logger
 	stop          chan struct{}
 	gracefulWait  time.Duration
-	noDataWaitSec int
+	noDataWaitSec int // no data to handler wait seconds
+	keyHandlers   map[string]broker.SubHandler
 }
 
 // New create broker interface
@@ -47,7 +48,7 @@ func New(opts ...broker.Option) broker.Broker {
 	return obj
 }
 
-// Publish publish message to topic
+// Publish pub message to topic
 func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, opts ...broker.PubOption) error {
 	// publish options
 	opt := broker.PublishOptions{
@@ -92,6 +93,7 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 		ctx = context.Background()
 	}
 
+	r.keyHandlers = opt.KeyHandlers
 	r.logger.Printf("subscribe message from redis receive topic:%v channel:%v msg...", topic, opt.Name)
 	done := make(chan struct{}, opt.ConcurrencySize)
 	for i := 0; i < opt.ConcurrencySize; i++ {
@@ -107,9 +109,7 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 				for {
 					select {
 					case <-ticker.C:
-						if err := r.handler(ctx, topic, opt.Name, handler); err != nil {
-							r.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
-						}
+						r.handler(ctx, topic, opt.Name, handler)
 					case <-r.stop:
 						return
 					}
@@ -120,9 +120,7 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 					case <-r.stop:
 						return
 					default:
-						if err := r.handler(ctx, topic, opt.Name, handler); err != nil {
-							r.logger.Printf("received topic:%v channel:%v handler msg err:%v", topic, channel, err)
-						}
+						r.handler(ctx, topic, opt.Name, handler)
 					}
 				}
 			}
@@ -143,7 +141,7 @@ func (r *redisImpl) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (r *redisImpl) handler(ctx context.Context, topic string, channel string, handler broker.SubHandler) error {
+func (r *redisImpl) handler(ctx context.Context, topic string, channel string, handler broker.SubHandler) {
 	defer broker.Recovery(r.logger)
 
 	listName := topic
@@ -153,18 +151,32 @@ func (r *redisImpl) handler(ctx context.Context, topic string, channel string, h
 
 	msgBytes, err := r.client.RPop(listName).Bytes()
 	if err != nil && err != redis.Nil {
-		return err
+		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
+		return
 	}
 
 	if err == redis.Nil || len(msgBytes) == 0 {
+		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
 		r.logger.Printf("no data received,wait data publish...")
 		backoff.Sleep(r.noDataWaitSec)
-		return nil
+		return
 	}
 
 	r.logger.Printf("received topic:%v channel:%v -- content: '%s'\n", topic, channel, string(msgBytes))
 
-	return handler(ctx, msgBytes)
+	err = handler(ctx, msgBytes)
+	if err != nil {
+		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
+		return
+	}
+
+	// if r.keyHandlers is not nil will handler msg
+	for key, fn := range r.keyHandlers {
+		err = fn(ctx, msgBytes)
+		if err != nil {
+			r.logger.Printf("received topic:%s channel:%s key:%s handler msg err:%v", topic, channel, key, err)
+		}
+	}
 }
 
 func (r *redisImpl) gracefulStop(ctx context.Context) {
