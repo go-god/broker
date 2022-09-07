@@ -24,14 +24,18 @@ var _ broker.Broker = (*kafkaImpl)(nil)
 // New create kafka broker
 func New(opts ...broker.Option) broker.Broker {
 	opt := broker.Options{
-		OperationTimeout:        10 * time.Second,
-		ConnectionTimeout:       10 * time.Second,
-		MaxConnectionsPerBroker: 1,
-		Logger:                  broker.DummyLogger,
-		GracefulWait:            5 * time.Second, // graceful exit time
+		OperationTimeout:  10 * time.Second,
+		ConnectionTimeout: 10 * time.Second,
+		Logger:            broker.DummyLogger,
+		GracefulWait:      5 * time.Second, // graceful exit time
 	}
+
 	for _, o := range opts {
 		o(&opt)
+	}
+
+	if opt.ConsumerAutoCommitInterval == 0 {
+		opt.ConsumerAutoCommitInterval = 1 * time.Second
 	}
 
 	if len(opt.Addrs) == 0 {
@@ -46,6 +50,7 @@ func New(opts ...broker.Option) broker.Broker {
 
 	// kafka sarama config
 	config := sarama.NewConfig()
+	config.Net.DialTimeout = opt.ConnectionTimeout
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 	config.Producer.Timeout = opt.OperationTimeout
@@ -53,7 +58,7 @@ func New(opts ...broker.Option) broker.Broker {
 	// consumer config
 	config.Consumer.Return.Errors = true
 	config.Consumer.Offsets.AutoCommit.Enable = true
-	config.Consumer.Offsets.AutoCommit.Interval = 1 * time.Second
+	config.Consumer.Offsets.AutoCommit.Interval = opt.ConsumerAutoCommitInterval
 	if opt.User != "" { // user/pwd auth
 		config.Net.SASL.Enable = true
 		config.Net.SASL.User = opt.User
@@ -70,7 +75,7 @@ func New(opts ...broker.Option) broker.Broker {
 	return k
 }
 
-// Publish publish message to topic
+// Publish pub message to topic
 func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, opts ...broker.PubOption) error {
 	select {
 	case <-k.stop:
@@ -90,15 +95,23 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 		return err
 	}
 	message := &sarama.ProducerMessage{
-		Topic: topic, Key: sarama.StringEncoder(opt.Name), Value: sarama.ByteEncoder(payload),
+		Topic: topic, Value: sarama.ByteEncoder(payload),
+	}
+
+	if opt.Name != "" {
+		// The partitioning key for this message. Pre-existing Encoders include
+		// StringEncoder and ByteEncoder.
+		message.Key = sarama.StringEncoder(opt.Name)
 	}
 
 	// create producer
 	var producer sarama.SyncProducer
 	producer, err = sarama.NewSyncProducerFromClient(k.client)
 	if err != nil {
-		k.logger.Printf("NewSyncProducerFromClient err:%v\n", err)
+		k.logger.Printf("new kafka producer err:%v\n", err)
+		return err
 	}
+
 	defer func() {
 		_ = producer.Close()
 	}()
@@ -118,13 +131,12 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 	return nil
 }
 
-// Subscribe subscribe message from topic + channel
+// Subscribe Sub message from topic + channel
 func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string, handler broker.SubHandler,
 	opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
-		SubType:         broker.Shared, // default:Shared
-		ConcurrencySize: 1,             // default:1
-		Name:            groupID,       // group_id
+		SubType: broker.Shared, // default:Shared
+		Name:    groupID,       // group_id
 	}
 
 	for _, o := range opts {
@@ -146,54 +158,51 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 		_ = consumerGroup.Close()
 	}()
 
-	done := make(chan struct{}, opt.ConcurrencySize)
+	done := make(chan struct{}, 1)
 	topics := []string{topic}
-	for i := 0; i < opt.ConcurrencySize; i++ {
-		go func() {
-			defer broker.Recovery(k.logger)
-			defer func() {
-				done <- struct{}{}
-			}()
+	go func() {
+		defer broker.Recovery(k.logger)
+		defer func() {
+			done <- struct{}{}
+		}()
 
-			consumerHandler := &consumerGroupHandler{
-				ctx:         ctx,
-				topic:       topic,
-				name:        opt.Name,
-				logger:      k.logger,
-				handler:     handler,
-				keyHandlers: opt.KeyHandlers,
-			}
+		consumerHandler := &consumerGroupHandler{
+			ctx:               ctx,
+			topic:             topic,
+			name:              opt.Name,
+			commitOffsetBlock: opt.CommitOffsetBlock,
+			logger:            k.logger,
+			handler:           handler,
+			keyHandlers:       opt.KeyHandlers,
+		}
 
-			for {
-				select {
-				case <-k.stop:
-					return
-				case consumeErr := <-consumerGroup.Errors():
-					k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
+		for {
+			select {
+			case <-k.stop:
+				return
+			case consumeErr := <-consumerGroup.Errors():
+				k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
+					topic, opt.Name, consumeErr)
+				backoff.Sleep(1)
+			default:
+				// Consume() should be called continuously in an infinite loop
+				// Because Consume() needs to be executed again after each rebalance to restore the connection
+				// The Join Group request is not initiated until the Consume starts. If the current consumer
+				// becomes the leader of the consumer group after joining, the rebalance process will also be
+				// performed to re-allocate
+				// The topics and partitions that each consumer group in the group needs to consume,
+				// and the consumption starts after the last Sync Group
+				consumeErr := consumerGroup.Consume(ctx, topics, consumerHandler)
+				if consumeErr != nil {
+					k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
 						topic, opt.Name, consumeErr)
-					backoff.Sleep(1)
-				default:
-					// Consume() should be called continuously in an infinite loop
-					// Because Consume() needs to be executed again after each rebalance to restore the connection
-					// The Join Group request is not initiated until the Consume starts. If the current consumer
-					// becomes the leader of the consumer group after joining, the rebalance process will also be
-					// performed to re-allocate
-					// The topics and partitions that each consumer group in the group needs to consume,
-					// and the consumption starts after the last Sync Group
-					consumeErr := consumerGroup.Consume(ctx, topics, consumerHandler)
-					if consumeErr != nil {
-						k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-							topic, opt.Name, consumeErr)
-						continue
-					}
+					continue
 				}
 			}
-		}()
-	}
+		}
+	}()
 
-	for i := 0; i < opt.ConcurrencySize; i++ {
-		<-done
-	}
+	<-done
 
 	return nil
 }

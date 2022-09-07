@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/Shopify/sarama"
-
 	"github.com/go-god/broker"
 )
 
@@ -17,12 +16,13 @@ var ErrSubHandlerInvalid = errors.New("subHandler is nil")
 // consumerGroupHandler impl sarama.ConsumerGroupHandler
 // consumer groups require Version to be >= V0_10_2_0
 type consumerGroupHandler struct {
-	ctx         context.Context
-	topic       string
-	name        string
-	logger      broker.Logger
-	handler     broker.SubHandler
-	keyHandlers map[string]broker.SubHandler
+	ctx               context.Context
+	topic             string
+	name              string
+	commitOffsetBlock bool
+	logger            broker.Logger
+	handler           broker.SubHandler
+	keyHandlers       map[string]broker.SubHandler
 }
 
 // Setup is run at the beginning of a new session, before ConsumeClaim.
@@ -69,7 +69,12 @@ func (c *consumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession,
 
 		// mark message as processed
 		sess.MarkMessage(msg, "")
-		sess.Commit()
+
+		// Commit the offset to the backend for kafka
+		// Note: calling Commit performs a blocking synchronous operation.
+		if c.commitOffsetBlock {
+			sess.Commit()
+		}
 	}
 
 	return nil

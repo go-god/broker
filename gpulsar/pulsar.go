@@ -26,8 +26,8 @@ var _ broker.Broker = (*pulsarImpl)(nil)
 // New create broker interface
 func New(opts ...broker.Option) broker.Broker {
 	opt := broker.Options{
-		OperationTimeout:        30 * time.Second,
-		ConnectionTimeout:       30 * time.Second,
+		OperationTimeout:        20 * time.Second,
+		ConnectionTimeout:       10 * time.Second,
 		MaxConnectionsPerBroker: 1,
 		Logger:                  broker.DummyLogger,
 		NoDataWaitSec:           3,               // default:3

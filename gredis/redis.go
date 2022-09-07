@@ -211,7 +211,7 @@ func (r *redisImpl) gracefulStop(ctx context.Context) {
 
 func redisClient(conf *broker.RedisConf) *redis.Client {
 	if conf.MaxConnAge == 0 {
-		conf.MaxConnAge = 30 * 60 * time.Second
+		conf.MaxConnAge = 1800 * time.Second
 	}
 
 	if conf.DialTimeout == 0 {
@@ -224,6 +224,14 @@ func redisClient(conf *broker.RedisConf) *redis.Client {
 
 	if conf.ReadTimeout == 0 {
 		conf.ReadTimeout = 3 * time.Second
+	}
+
+	if conf.PoolTimeout == 0 {
+		conf.PoolTimeout = conf.ReadTimeout + time.Second
+	}
+
+	if conf.IdleTimeout == 0 {
+		conf.IdleTimeout = 5 * time.Minute
 	}
 
 	opt := &redis.Options{

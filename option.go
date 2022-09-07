@@ -19,10 +19,12 @@ type Options struct {
 	AuthToken string
 	// OperationTimeout operation timeout
 	OperationTimeout time.Duration
-	// ConnectionTimeout timeout for the establishment of a TCP connection (default: 5 seconds)
+	// ConnectionTimeout timeout for the establishment of a TCP connection (default: 10 seconds)
 	ConnectionTimeout time.Duration
+
 	// MaxConnectionsPerBroker the max number of connections to a single broker
-	// that will kept in the pool. (Default: 1 connection)
+	// that will keep in the pool. (Default: 1 connection)
+	// this param for pulsar connection per broker
 	MaxConnectionsPerBroker int
 
 	// =======redis mq================
@@ -33,6 +35,9 @@ type Options struct {
 
 	// no data wait second
 	NoDataWaitSec int
+
+	// ConsumerAutoCommitInterval consumer auto commit interval
+	ConsumerAutoCommitInterval time.Duration
 
 	// Logger logger
 	Logger Logger
@@ -136,8 +141,11 @@ type PublishOptions struct {
 	// if you use pulsar mq,if not assigned, the system will generate
 	// a globally unique name which can be access with
 	// Producer.ProducerName().
+	//
 	// for kafka publish message key
-	Name string // publish name
+	// The partitioning key for this message. Pre-existing Encoders include
+	// StringEncoder and ByteEncoder.
+	Name string
 
 	// DisableBatching controls whether automatic batching of messages is enabled for the producer.
 	// By default batching is enabled.
@@ -202,9 +210,14 @@ type SubscribeOptions struct {
 	MessageChannelSize int  // default:100
 
 	// subscribe concurrency count,default:1
+	// Note: this param for redis or pulsar consumer message
 	ConcurrencySize int
 
 	Offset int64
+
+	// Commit the offset to the backend for kafka
+	// Note: calling Commit performs a blocking synchronous operation.
+	CommitOffsetBlock bool
 
 	// SubInterval subscribe interval,default:0
 	SubInterval time.Duration
@@ -294,6 +307,13 @@ func WithSubType(t SubscriptionType) SubOption {
 func WithSubRetryEnable() SubOption {
 	return func(s *SubscribeOptions) {
 		s.RetryEnable = true
+	}
+}
+
+// WithCommitOffsetBlock commit offset block when message consumer.
+func WithCommitOffsetBlock() SubOption {
+	return func(s *SubscribeOptions) {
+		s.CommitOffsetBlock = true
 	}
 }
 

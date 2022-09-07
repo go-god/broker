@@ -51,7 +51,8 @@ type RedisConf struct {
 	IdleTimeout time.Duration
 
 	// Connection age at which client retires (closes) the connection.
-	// Default is to not close aged connections.
+	// go redis Default is to not close aged connections
+	// but 1800s is recommended.
 	MaxConnAge time.Duration
 }
 
