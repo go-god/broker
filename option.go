@@ -36,7 +36,7 @@ type Options struct {
 	// no data wait second
 	NoDataWaitSec int
 
-	// ConsumerAutoCommitInterval consumer auto commit interval
+	// ConsumerAutoCommitInterval consumer auto commit interval (default: 1s)
 	ConsumerAutoCommitInterval time.Duration
 
 	// Logger logger
@@ -124,6 +124,13 @@ func WithNoDataWaitSec(sec int) Option {
 func WithLogger(logger Logger) Option {
 	return func(o *Options) {
 		o.Logger = logger
+	}
+}
+
+// WithConsumerAutoCommitInterval set consumer auto commit interval.
+func WithConsumerAutoCommitInterval(interval time.Duration) Option {
+	return func(o *Options) {
+		o.ConsumerAutoCommitInterval = interval
 	}
 }
 
