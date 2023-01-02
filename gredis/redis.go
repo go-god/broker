@@ -11,6 +11,8 @@ import (
 	"github.com/go-god/broker/backoff"
 )
 
+var _ broker.Broker = (*redisImpl)(nil)
+
 type redisImpl struct {
 	client        *redis.Client
 	prefix        string
