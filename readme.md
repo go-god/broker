@@ -6,7 +6,7 @@
 https://pulsar.apache.org/docs/2.11.x/getting-started-docker/
 
 ```shell
-docker rm -f $(docker ps | grep pulsar-sever | awk '{print $1}')
+docker rm -f `docker ps -a | grep pulsar-server | awk '{print $1}'`
 docker run -idt \
 --name pulsar-server \
 -p 6650:6650 \
