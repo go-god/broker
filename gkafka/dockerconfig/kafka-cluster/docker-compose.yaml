@@ -1,5 +1,5 @@
 # kafka cluster in docker
-version: '2'
+version: '3'
 services:
   zookeeper:
     image: wurstmeister/zookeeper
@@ -20,7 +20,7 @@ services:
     environment:
       KAFKA_ADVERTISED_HOST_NAME: kafka1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181/kafka
-      KAFKA_LISTENERS: PLAINTEXT://:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
       # 请修改为自己本机IP地址
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.31.136:9093
       KAFKA_BROKER_ID: 1
@@ -38,7 +38,7 @@ services:
     environment:
       KAFKA_ADVERTISED_HOST_NAME: kafka2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181/kafka
-      KAFKA_LISTENERS: PLAINTEXT://:9094
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094
       # 请修改为自己本机IP地址
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.31.136:9094
       KAFKA_BROKER_ID: 2
@@ -56,7 +56,7 @@ services:
     environment:
       KAFKA_ADVERTISED_HOST_NAME: kafka3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181/kafka
-      KAFKA_LISTENERS: PLAINTEXT://:9095
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9095
       # 请修改为自己本机IP地址
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.31.136:9095
       KAFKA_BROKER_ID: 3

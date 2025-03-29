@@ -13,9 +13,10 @@ func TestKafkaPublish(t *testing.T) {
 	b := New(
 		broker.WithBrokerAddress("localhost:9092"),
 		broker.WithLogger(broker.LoggerFunc(log.Printf)),
+		broker.WithOperationTimeout(10*time.Second),
 	)
 
-	err := b.Publish(context.Background(), "my-topic", "kafka hello", broker.WithSendTimeout(30*time.Second))
+	err := b.Publish(context.Background(), "my-topic", "kafka hello", broker.WithPublishName("my-test"))
 	log.Printf("publish err:%v", err)
 	_ = b.Shutdown(context.Background())
 }
