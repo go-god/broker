@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
+
 	"github.com/go-god/broker"
 )
 

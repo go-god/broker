@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 
 	"github.com/go-god/broker"
 	"github.com/go-god/broker/backoff"

@@ -2,13 +2,16 @@
 version: '3'
 services:
   zookeeper:
-    image: wurstmeister/zookeeper
+    image: bitnami/zookeeper:latest
     restart: always
     container_name: my-kafka-zk
     ports:
       - 2181:2181
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+
   kafka:
-    image: wurstmeister/kafka
+    image: bitnami/kafka:latest
     restart: always
     container_name: my-kafka
     depends_on:
@@ -24,5 +27,3 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://192.168.10.108:9092
       # broker id
       KAFKA_BROKER_ID: 1
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
