@@ -31,7 +31,7 @@ func TestPulsarPublish(t *testing.T) {
 	defer producer.Close()
 	// send message
 	for i := 0; i < 100; i++ {
-		sendMsg(producer, i)
+		_ = sendMsg(producer, i)
 	}
 }
 
@@ -101,6 +101,9 @@ func TestPulsarConsumeReader(t *testing.T) {
 		Topic:          "my-topic",
 		StartMessageID: pulsar.EarliestMessageID(),
 	})
+	if err != nil {
+		log.Fatalf("create reader error:%v\n", err)
+	}
 
 	for reader.HasNext() {
 		msg, err := reader.Next(context.Background())

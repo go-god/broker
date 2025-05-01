@@ -45,15 +45,22 @@ type RedisConf struct {
 	// new connection is slow.
 	MinIdleConns int
 
-	// Amount of time after which client closes idle connections.
+	// ConnMaxIdleTime is the maximum amount of time a connection may be idle.
 	// Should be less than server's timeout.
-	// Default is 5 minutes. -1 disables idle timeout check.
-	IdleTimeout time.Duration
+	//
+	// Expired connections may be closed lazily before reuse.
+	// If d <= 0, connections are not closed due to a connection's idle time.
+	//
+	// Default is 30 minutes. -1 disables idle timeout check.
+	ConnMaxIdleTime time.Duration
 
-	// Connection age at which client retires (closes) the connection.
-	// go redis Default is to not close aged connections
-	// but 1800s is recommended.
-	MaxConnAge time.Duration
+	// ConnMaxLifetime is the maximum amount of time a connection may be reused.
+	//
+	// Expired connections may be closed lazily before reuse.
+	// If <= 0, connections are not closed due to a connection's age.
+	//
+	// Default is 1800s
+	ConnMaxLifetime time.Duration
 }
 
 // WithRedisConf with redis config

@@ -2,6 +2,7 @@ package gkafka
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"testing"
 	"time"
@@ -16,8 +17,11 @@ func TestKafkaPublish(t *testing.T) {
 		broker.WithOperationTimeout(10*time.Second),
 	)
 
-	err := b.Publish(context.Background(), "my-topic", "kafka hello", broker.WithPublishName("my-test"))
-	log.Printf("publish err:%v", err)
+	for i := 0; i < 10*1000; i++ {
+		msg := fmt.Sprintf("hello world %d", i)
+		err := b.Publish(context.Background(), "my-topic", msg, broker.WithPublishName("my-test"))
+		log.Printf("publish err:%v", err)
+	}
 	_ = b.Shutdown(context.Background())
 }
 
@@ -41,7 +45,25 @@ func TestKafkaConsumer(t *testing.T) {
 	_ = b.Subscribe(context.Background(), "my-topic", "group-1", func(ctx context.Context, data []byte) error {
 		log.Println("data: ", string(data))
 		return nil
-	})
+	}, broker.WithSubPullMsgGoroutines(3))
+}
+
+func TestKafkaConsumeWithBuffer(t *testing.T) {
+	b := New(
+		broker.WithBrokerAddress("localhost:9092"),
+		broker.WithLogger(broker.LoggerFunc(log.Printf)),
+		broker.WithGracefulWait(3*time.Second),
+	)
+
+	_ = b.Subscribe(context.Background(), "my-topic", "group-1", func(ctx context.Context, data []byte) error {
+		log.Println("data: ", string(data))
+		return nil
+	},
+		broker.WithSubPullMsgGoroutines(3),
+		broker.WithSubEnableBuffer(),          // enable pull msg into buffer
+		broker.WithSubBufferSize(1024),        // default:1024
+		broker.WithSubConsumeMsgGoroutines(3), // default:1
+	)
 }
 
 func TestNilByteEqEmptyStr(t *testing.T) {

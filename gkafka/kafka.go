@@ -38,7 +38,7 @@ func New(opts ...broker.Option) broker.Broker {
 		opt.ConsumerAutoCommitInterval = 1 * time.Second
 	}
 
-	if len(opt.Addrs) == 0 {
+	if len(opt.Address) == 0 {
 		panic("kafka address is empty")
 	}
 
@@ -67,9 +67,9 @@ func New(opts ...broker.Option) broker.Broker {
 
 	// create kafka client
 	var err error
-	k.client, err = sarama.NewClient(opt.Addrs, config)
+	k.client, err = sarama.NewClient(opt.Address, config)
 	if err != nil {
-		panic("could not connection kafka client:" + err.Error())
+		panic("failed to new kafka client: " + err.Error())
 	}
 
 	return k
@@ -135,8 +135,9 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string, handler broker.SubHandler,
 	opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
-		SubType: broker.Shared, // default:Shared
-		Name:    groupID,       // group_id
+		Name:              groupID, // group_id
+		Topics:            []string{topic},
+		PullMsgGoroutines: 1, // pull msg from broker goroutines
 	}
 
 	for _, o := range opts {
@@ -147,11 +148,10 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 		ctx = context.Background()
 	}
 
-	k.logger.Printf("subscribe message from kafka receive topic:%v channel:%v msg...\n", topic, opt.Name)
-
+	k.logger.Printf("start subscribe message from kafka receive topics:%v group_id:%v msg...\n", opt.Topics, opt.Name)
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(opt.Name, k.client)
 	if err != nil {
-		panic(fmt.Errorf("new kafka consumer name:%s err:%s", opt.Name, err.Error()))
+		return fmt.Errorf("new kafka consume client for topics:%v group_id:%v err:%v", opt.Topics, opt.Name, err)
 	}
 
 	defer func() {
@@ -159,21 +159,36 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 	}()
 
 	done := make(chan struct{}, 1)
-	topics := []string{topic}
 	go func() {
 		defer broker.Recovery(k.logger)
 		defer func() {
 			done <- struct{}{}
 		}()
 
-		consumerHandler := &consumerGroupHandler{
-			ctx:               ctx,
-			topic:             topic,
-			name:              opt.Name,
-			commitOffsetBlock: opt.CommitOffsetBlock,
-			logger:            k.logger,
-			handler:           handler,
-			keyHandlers:       opt.KeyHandlers,
+		c := &consumerGroupHandler{
+			ctx:                  ctx,
+			topics:               opt.Topics,
+			groupID:              opt.Name,
+			commitOffsetBlock:    opt.CommitOffsetBlock,
+			logger:               k.logger,
+			handler:              handler,
+			keyHandlers:          opt.KeyHandlers,
+			pullMsgGoroutines:    opt.PullMsgGoroutines,
+			enableBuffer:         opt.EnableBuffer,
+			bufferSize:           opt.BufferSize,
+			consumeMsgGoroutines: opt.ConsumeMsgGoroutines,
+			stop:                 k.stop,
+		}
+
+		if c.enableBuffer {
+			if c.bufferSize == 0 {
+				c.bufferSize = 1024
+			}
+			if c.consumeMsgGoroutines == 0 {
+				c.consumeMsgGoroutines = 1
+			}
+
+			c.msgBuffer = make(chan *sarama.ConsumerMessage, c.consumeMsgGoroutines)
 		}
 
 		for {
@@ -181,8 +196,8 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 			case <-k.stop:
 				return
 			case consumeErr := <-consumerGroup.Errors():
-				k.logger.Printf("kafka received topic:%v channel:%v handler msg err:%v\n",
-					topic, opt.Name, consumeErr)
+				k.logger.Printf("kafka received topics:%v group_id:%v handler msg err:%v\n",
+					opt.Topics, opt.Name, consumeErr)
 				backoff.Sleep(1)
 			default:
 				// Consume() should be called continuously in an infinite loop
@@ -192,10 +207,10 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 				// performed to re-allocate
 				// The topics and partitions that each consumer group in the group needs to consume,
 				// and the consumption starts after the last Sync Group
-				consumeErr := consumerGroup.Consume(ctx, topics, consumerHandler)
+				consumeErr := consumerGroup.Consume(ctx, opt.Topics, c)
 				if consumeErr != nil {
-					k.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-						topic, opt.Name, consumeErr)
+					k.logger.Printf("received topics:%v group_id:%v handler msg err:%v\n",
+						opt.Topics, opt.Name, consumeErr)
 					continue
 				}
 			}
@@ -231,15 +246,19 @@ func (k *kafkaImpl) gracefulStop(ctx context.Context) {
 	// if your application should wait for other services
 	// to finalize based on context cancellation.
 	done := make(chan struct{}, 1)
-	var err = make(chan error, 1)
 	go func() {
 		defer close(done)
-
-		err <- k.client.Close()
+		err := k.client.Close()
+		if err != nil {
+			k.logger.Printf("kafka client close err:%v\n", err)
+		}
 	}()
 
-	<-done
-	<-ctx.Done()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		k.logger.Printf("graceful shutdown timeout")
+	}
 
-	k.logger.Printf("subscribe msg shutting down,err:%v\n", <-err)
+	k.logger.Printf("subscribe msg shutting down")
 }

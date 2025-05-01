@@ -37,7 +37,7 @@ func New(opts ...broker.Option) broker.Broker {
 		o(&opt)
 	}
 
-	if len(opt.Addrs) == 0 {
+	if len(opt.Address) == 0 {
 		panic("pulsar address is empty")
 	}
 
@@ -49,7 +49,7 @@ func New(opts ...broker.Option) broker.Broker {
 	}
 
 	clientOpt := pulsar.ClientOptions{
-		URL:                     strings.Join(opt.Addrs, ","),
+		URL:                     strings.Join(opt.Address, ","),
 		OperationTimeout:        opt.OperationTimeout,
 		ConnectionTimeout:       opt.ConnectionTimeout,
 		MaxConnectionsPerBroker: opt.MaxConnectionsPerBroker,
@@ -66,15 +66,14 @@ func New(opts ...broker.Option) broker.Broker {
 	// create pulsar client
 	client, err := pulsar.NewClient(clientOpt)
 	if err != nil {
-		panic("could not connection pulsar client:" + err.Error())
+		panic("failed to new pulsar client: " + err.Error())
 	}
 
 	p.client = client
-
 	return p
 }
 
-// Publish publish message to topic
+// Publish returns nil if msg publish success to topic
 func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 	opts ...broker.PubOption) error {
 	select {
@@ -140,7 +139,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	handler broker.SubHandler, opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
 		SubType:            broker.Shared, // default Shared
-		ConcurrencySize:    1,             // default:1
+		PullMsgGoroutines:  1,             // default:1
 		MessageChannelSize: 100,           // message channel size,default:100
 		ReceiverQueueSize:  10000,         // default:10000
 		Name:               channel,
@@ -164,7 +163,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 	})
 
 	if err != nil {
-		panic(fmt.Errorf("new pulsar consumer name:%s err:%v", opt.Name, err))
+		return fmt.Errorf("new pulsar consumer name:%s err:%v", opt.Name, err)
 	}
 
 	defer consumer.Close()
@@ -175,8 +174,8 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 		msgChannel = make(chan pulsar.ConsumerMessage, opt.MessageChannelSize)
 	}
 
-	done := make(chan struct{}, opt.ConcurrencySize)
-	for i := 0; i < opt.ConcurrencySize; i++ {
+	done := make(chan struct{}, opt.PullMsgGoroutines)
+	for i := 0; i < opt.PullMsgGoroutines; i++ {
 		go func() {
 			defer broker.Recovery(p.logger)
 			defer func() {
@@ -235,7 +234,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 		}()
 	}
 
-	for i := 0; i < opt.ConcurrencySize; i++ {
+	for i := 0; i < opt.PullMsgGoroutines; i++ {
 		<-done
 	}
 
@@ -298,12 +297,14 @@ func (p *pulsarImpl) gracefulStop(ctx context.Context) {
 	done := make(chan struct{}, 1)
 	go func() {
 		defer close(done)
-
 		p.client.Close()
 	}()
 
-	<-done
-	<-ctx.Done()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		p.logger.Printf("graceful shutdown timeout")
+	}
 
 	p.logger.Printf("subscribe msg shutting down\n")
 }

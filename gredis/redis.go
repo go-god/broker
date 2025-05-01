@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-redis/redis"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/go-god/broker"
 	"github.com/go-god/broker/backoff"
@@ -14,7 +14,7 @@ import (
 var _ broker.Broker = (*redisImpl)(nil)
 
 type redisImpl struct {
-	client        *redis.Client
+	client        redis.UniversalClient
 	prefix        string
 	logger        broker.Logger
 	stop          chan struct{}
@@ -39,7 +39,7 @@ func New(opts ...broker.Option) broker.Broker {
 	}
 
 	obj := &redisImpl{
-		client:        redisClient(opt.RedisConf),
+		client:        initRedisClient(opt.RedisConf),
 		prefix:        opt.Prefix,
 		logger:        opt.Logger,
 		noDataWaitSec: opt.NoDataWaitSec,
@@ -56,6 +56,7 @@ func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, 
 	opt := broker.PublishOptions{
 		SendTimeout: 30 * time.Second,
 	}
+
 	for _, o := range opts {
 		o(&opt)
 	}
@@ -73,8 +74,9 @@ func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	err = r.client.WithContext(ctx).LPush(listName, string(payload)).Err()
+	ctx, cancel := context.WithTimeout(ctx, opt.SendTimeout)
+	defer cancel()
+	err = r.client.LPush(ctx, listName, string(payload)).Err()
 	return err
 }
 
@@ -82,9 +84,8 @@ func (r *redisImpl) Publish(ctx context.Context, topic string, msg interface{}, 
 func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string, handler broker.SubHandler,
 	opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
-		SubType:         broker.Exclusive, // default:Exclusive
-		ConcurrencySize: 1,                // default:1
-		Name:            channel,
+		PullMsgGoroutines: 1, // default:1
+		Name:              channel,
 	}
 
 	for _, o := range opts {
@@ -97,8 +98,8 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 
 	r.keyHandlers = opt.KeyHandlers
 	r.logger.Printf("subscribe message from redis receive topic:%v channel:%v msg...", topic, opt.Name)
-	done := make(chan struct{}, opt.ConcurrencySize)
-	for i := 0; i < opt.ConcurrencySize; i++ {
+	done := make(chan struct{}, opt.PullMsgGoroutines)
+	for i := 0; i < opt.PullMsgGoroutines; i++ {
 		go func() {
 			defer func() {
 				done <- struct{}{}
@@ -129,7 +130,7 @@ func (r *redisImpl) Subscribe(ctx context.Context, topic string, channel string,
 		}()
 	}
 
-	for i := 0; i < opt.ConcurrencySize; i++ {
+	for i := 0; i < opt.PullMsgGoroutines; i++ {
 		<-done
 	}
 
@@ -151,21 +152,18 @@ func (r *redisImpl) handler(ctx context.Context, topic string, channel string, h
 		listName = strings.Join([]string{r.prefix, listName}, ":")
 	}
 
-	msgBytes, err := r.client.RPop(listName).Bytes()
-	if err != nil && err != redis.Nil {
+	msgBytes, err := r.client.RPop(ctx, listName).Bytes()
+	if err != nil {
 		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
 		return
 	}
-
-	if err == redis.Nil || len(msgBytes) == 0 {
-		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
+	if len(msgBytes) == 0 {
 		r.logger.Printf("no data received,wait data publish...")
 		backoff.Sleep(r.noDataWaitSec)
 		return
 	}
 
-	r.logger.Printf("received topic:%v channel:%v -- content: '%s'\n", topic, channel, string(msgBytes))
-
+	r.logger.Printf("received topic:%v channel:%v\n", topic, channel)
 	err = handler(ctx, msgBytes)
 	if err != nil {
 		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
@@ -198,22 +196,27 @@ func (r *redisImpl) gracefulStop(ctx context.Context) {
 	// if your application should wait for other services
 	// to finalize based on context cancellation.
 	done := make(chan struct{}, 1)
-	var err = make(chan error, 1)
 	go func() {
 		defer close(done)
 
-		err <- r.client.Close()
+		err := r.client.Close()
+		if err != nil {
+			r.logger.Printf("redis client close err:%v\n", err)
+		}
 	}()
 
-	<-done
-	<-ctx.Done()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		r.logger.Printf("graceful stop timeout")
+	}
 
-	r.logger.Printf("subscribe msg shutting down,err:%v\n", <-err)
+	r.logger.Printf("subscribe msg shutting down")
 }
 
-func redisClient(conf *broker.RedisConf) *redis.Client {
-	if conf.MaxConnAge == 0 {
-		conf.MaxConnAge = 1800 * time.Second
+func initRedisClient(conf *broker.RedisConf) redis.UniversalClient {
+	if conf.ConnMaxLifetime == 0 {
+		conf.ConnMaxLifetime = 1800 * time.Second
 	}
 
 	if conf.DialTimeout == 0 {
@@ -232,23 +235,23 @@ func redisClient(conf *broker.RedisConf) *redis.Client {
 		conf.PoolTimeout = conf.ReadTimeout + time.Second
 	}
 
-	if conf.IdleTimeout == 0 {
-		conf.IdleTimeout = 5 * time.Minute
+	if conf.ConnMaxIdleTime == 0 {
+		conf.ConnMaxIdleTime = 30 * time.Minute
 	}
 
 	opt := &redis.Options{
-		Addr:         conf.Address,
-		Password:     conf.Password,
-		DB:           conf.DB, // use default DB
-		MaxRetries:   conf.MaxRetries,
-		DialTimeout:  conf.DialTimeout,  // Default is 5 seconds
-		ReadTimeout:  conf.ReadTimeout,  // Default is 3 seconds
-		WriteTimeout: conf.WriteTimeout, // Default is ReadTimeout
-		PoolSize:     conf.PoolSize,
-		PoolTimeout:  conf.PoolTimeout,
-		MinIdleConns: conf.MinIdleConns,
-		IdleTimeout:  conf.IdleTimeout,
-		MaxConnAge:   conf.MaxConnAge,
+		Addr:            conf.Address,
+		Password:        conf.Password,
+		DB:              conf.DB, // use default DB
+		MaxRetries:      conf.MaxRetries,
+		DialTimeout:     conf.DialTimeout,  // Default is 5 seconds
+		ReadTimeout:     conf.ReadTimeout,  // Default is 3 seconds
+		WriteTimeout:    conf.WriteTimeout, // Default is ReadTimeout
+		PoolSize:        conf.PoolSize,
+		PoolTimeout:     conf.PoolTimeout,
+		MinIdleConns:    conf.MinIdleConns,
+		ConnMaxIdleTime: conf.ConnMaxIdleTime,
+		ConnMaxLifetime: conf.ConnMaxLifetime,
 	}
 
 	return redis.NewClient(opt)
