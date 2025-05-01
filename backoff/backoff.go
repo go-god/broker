@@ -20,6 +20,7 @@ func Do(attempts int) time.Duration {
 
 // Sleep where no data to sleep rnd * 2 + sec time.Duration
 func Sleep(sec int) {
-	rnd := rand.Intn(2)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rnd := r.Intn(2)
 	time.Sleep(Do(2*rnd + sec))
 }

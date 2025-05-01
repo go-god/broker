@@ -2,8 +2,8 @@ package gredis
 
 import (
 	"context"
+	"fmt"
 	"log"
-	"strconv"
 	"testing"
 	"time"
 
@@ -25,8 +25,9 @@ func TestRedisPublish(t *testing.T) {
 		broker.WithLogger(broker.LoggerFunc(log.Printf)), // logger
 	)
 
-	for i := 0; i < 10000; i++ {
-		err := b.Publish(context.Background(), "my-topic", "hello,world: "+strconv.Itoa(i))
+	for i := 0; i < 10*10000; i++ {
+		msg := fmt.Sprintf("hello,world:%d", i)
+		err := b.Publish(context.Background(), "my-topic", msg)
 		log.Printf("publish err:%v\n", err)
 	}
 
@@ -53,5 +54,8 @@ func TestRedisSub(t *testing.T) {
 	_ = b.Subscribe(context.Background(), "my-topic", "", func(ctx context.Context, data []byte) error {
 		log.Printf("data: %v", string(data))
 		return nil
-	})
+	},
+		// 30 msg/s
+		broker.WithSubPullMsgGoroutines(30), broker.WithSubInterval(1*time.Second),
+	)
 }

@@ -2,6 +2,7 @@ package gredis
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -153,7 +154,7 @@ func (r *redisImpl) handler(ctx context.Context, topic string, channel string, h
 	}
 
 	msgBytes, err := r.client.RPop(ctx, listName).Bytes()
-	if err != nil {
+	if err != nil && !errors.Is(err, redis.Nil) {
 		r.logger.Printf("received topic:%s channel:%s handler msg err:%v", topic, channel, err)
 		return
 	}
