@@ -12,6 +12,18 @@ type Options struct {
 	User     string   // user
 	Password string   // password
 
+	// ========kafka mq================
+	// kafka protocol,eg:PLAINTEXT,SASL_PLAINTEXT,SASL_SSL 三种协议格式
+	// 对于SASL_PLAINTEXT来说，只需要配置user/password即可
+	// 对于SASL_SSL来说，需要配置user/password，如果有证书cert路径不为空，就需要设置 ssl.ca.location 读取证书
+	Protocol string // default: PLAINTEXT
+	// kafka sasl.mechanism,eg:PLAIN,SCRAM-SHA256,SCRAM-SHA512
+	SaslMechanism string
+
+	// 对于 Protocol=SASL_SSL，如果证书路径不为空，就读取证书
+	// 同时，如果insecure_skip_verify参数为true，表示跳过证书,那么enable.ssl.certificate.verification=false，否则为true
+	CertPath string // 证书路径，eg:/www/cert.crt
+
 	// ========pulsar mq===============
 	// ListenerName Configure the net model for vpc user to connect the pulsar broker
 	ListenerName string
