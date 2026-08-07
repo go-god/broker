@@ -12,6 +12,9 @@ type SubscribeOptions struct {
 	// specifies the consumer name,like kafka consume group id
 	Name string
 
+	// sub message with metadata
+	SubMessageHandler SubMessageHandler
+
 	// KeyHandlers for kafka consumer message key handler map
 	// for redis sub,you can specify different message subscriber functions to handle msg.
 	KeyHandlers map[string]SubHandler
@@ -23,9 +26,9 @@ type SubscribeOptions struct {
 	PullMsgGoroutines int
 
 	// for kafka whether put the message in the buffer pool first when consuming it
-	EnableBuffer         bool
-	BufferSize           int
-	ConsumeMsgGoroutines int
+	EnableMsgBuffer            bool
+	MsgBufferSize              int
+	ConsumeMsgBufferGoroutines int
 
 	// for pulsar mq receive messages from channel.
 	// The channel returns a struct which contains message and the consumer from where
@@ -113,21 +116,21 @@ func WithSubPullMsgGoroutines(size int) SubOption {
 // WithSubEnableBuffer enable consume msg buffer
 func WithSubEnableBuffer() SubOption {
 	return func(s *SubscribeOptions) {
-		s.EnableBuffer = true
+		s.EnableMsgBuffer = true
 	}
 }
 
 // WithSubBufferSize set consume msg buffer size
 func WithSubBufferSize(size int) SubOption {
 	return func(s *SubscribeOptions) {
-		s.BufferSize = size
+		s.MsgBufferSize = size
 	}
 }
 
 // WithSubConsumeMsgGoroutines set consume msg from buffer goroutines
 func WithSubConsumeMsgGoroutines(size int) SubOption {
 	return func(s *SubscribeOptions) {
-		s.ConsumeMsgGoroutines = size
+		s.ConsumeMsgBufferGoroutines = size
 	}
 }
 
@@ -163,6 +166,13 @@ func WithSubRetryEnable() SubOption {
 func WithCommitOffsetBlock() SubOption {
 	return func(s *SubscribeOptions) {
 		s.CommitOffsetBlock = true
+	}
+}
+
+// WithSubMessageHandler set SubMessageHandler
+func WithSubMessageHandler(handler SubMessageHandler) SubOption {
+	return func(s *SubscribeOptions) {
+		s.SubMessageHandler = handler
 	}
 }
 

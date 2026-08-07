@@ -2,8 +2,13 @@ package gkafka
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"log"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -27,13 +32,18 @@ func New(opts ...broker.Option) broker.Broker {
 		OperationTimeout:  10 * time.Second,
 		ConnectionTimeout: 10 * time.Second,
 		Logger:            broker.DummyLogger,
-		GracefulWait:      5 * time.Second, // graceful exit time
+		GracefulWait:      5 * time.Second,                // graceful exit time
+		Protocol:          "PLAINTEXT",                    // kafka protocol
+		SASLMechanism:     "PLAIN",                        // kafka sasl.mechanism
+		CompressionLevel:  sarama.CompressionLevelDefault, // kafka compression level
+		Compression:       0,                              // no compression
 	}
 
 	for _, o := range opts {
 		o(&opt)
 	}
 
+	opt.Protocol = strings.ToUpper(strings.TrimSpace(opt.Protocol))
 	if opt.ConsumerAutoCommitInterval == 0 {
 		opt.ConsumerAutoCommitInterval = 1 * time.Second
 	}
@@ -54,22 +64,26 @@ func New(opts ...broker.Option) broker.Broker {
 	config.Producer.Return.Successes = true
 	config.Producer.Return.Errors = true
 	config.Producer.Timeout = opt.OperationTimeout
+	config.Producer.CompressionLevel = opt.CompressionLevel
+	config.Producer.Compression = sarama.CompressionCodec(opt.Compression)
 
 	// consumer config
 	config.Consumer.Return.Errors = true
 	config.Consumer.Offsets.AutoCommit.Enable = true
 	config.Consumer.Offsets.AutoCommit.Interval = opt.ConsumerAutoCommitInterval
-	if opt.User != "" { // user/pwd auth
-		config.Net.SASL.Enable = true
-		config.Net.SASL.User = opt.User
-		config.Net.SASL.Password = opt.Password
+
+	// configure kafka protocol: PLAINTEXT, SASL_PLAINTEXT, SASL_SSL
+	if opt.Protocol != "PLAINTEXT" {
+		if err := configureKafkaSecurity(config, opt); err != nil {
+			log.Fatalln("failed to configure kafka security: " + err.Error())
+		}
 	}
 
 	// create kafka client
 	var err error
 	k.client, err = sarama.NewClient(opt.Address, config)
 	if err != nil {
-		panic("failed to new kafka client: " + err.Error())
+		log.Fatalln("failed to new kafka client: " + err.Error())
 	}
 
 	return k
@@ -96,6 +110,17 @@ func (k *kafkaImpl) Publish(_ context.Context, topic string, msg interface{}, op
 	}
 	message := &sarama.ProducerMessage{
 		Topic: topic, Value: sarama.ByteEncoder(payload),
+	}
+
+	// kafka producer message headers
+	if hLen := len(opt.Headers); hLen > 0 {
+		message.Headers = make([]sarama.RecordHeader, 0, hLen)
+		for key := range opt.Headers {
+			message.Headers = append(message.Headers, sarama.RecordHeader{
+				Key:   opt.Headers[key].Key,
+				Value: opt.Headers[key].Value,
+			})
+		}
 	}
 
 	if opt.Name != "" {
@@ -158,6 +183,33 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 		_ = consumerGroup.Close()
 	}()
 
+	c := &consumerGroupHandler{
+		ctx:                        ctx,
+		topics:                     opt.Topics,
+		groupID:                    opt.Name,
+		commitOffsetBlock:          opt.CommitOffsetBlock,
+		logger:                     k.logger,
+		subHandler:                 handler,
+		keyHandlers:                opt.KeyHandlers,
+		subMessageHandler:          opt.SubMessageHandler,
+		pullMsgGoroutines:          opt.PullMsgGoroutines,
+		enableMsgBuffer:            opt.EnableMsgBuffer,
+		msgBufferSize:              opt.MsgBufferSize,
+		consumeMsgBufferGoroutines: opt.ConsumeMsgBufferGoroutines,
+		stop:                       k.stop,
+	}
+
+	if c.enableMsgBuffer {
+		if c.msgBufferSize == 0 {
+			c.msgBufferSize = 1024
+		}
+		if c.consumeMsgBufferGoroutines == 0 {
+			c.consumeMsgBufferGoroutines = 1
+		}
+
+		c.msgBuffer = make(chan *sarama.ConsumerMessage, c.msgBufferSize)
+	}
+
 	done := make(chan struct{}, 1)
 	go func() {
 		defer broker.Recovery(k.logger)
@@ -165,35 +217,13 @@ func (k *kafkaImpl) Subscribe(ctx context.Context, topic string, groupID string,
 			done <- struct{}{}
 		}()
 
-		c := &consumerGroupHandler{
-			ctx:                  ctx,
-			topics:               opt.Topics,
-			groupID:              opt.Name,
-			commitOffsetBlock:    opt.CommitOffsetBlock,
-			logger:               k.logger,
-			handler:              handler,
-			keyHandlers:          opt.KeyHandlers,
-			pullMsgGoroutines:    opt.PullMsgGoroutines,
-			enableBuffer:         opt.EnableBuffer,
-			bufferSize:           opt.BufferSize,
-			consumeMsgGoroutines: opt.ConsumeMsgGoroutines,
-			stop:                 k.stop,
-		}
-
-		if c.enableBuffer {
-			if c.bufferSize == 0 {
-				c.bufferSize = 1024
-			}
-			if c.consumeMsgGoroutines == 0 {
-				c.consumeMsgGoroutines = 1
-			}
-
-			c.msgBuffer = make(chan *sarama.ConsumerMessage, c.consumeMsgGoroutines)
-		}
-
 		for {
 			select {
+			case <-ctx.Done():
+				k.logger.Printf("ctx canceled,err:%v\n", ctx.Err())
+				return
 			case <-k.stop:
+				k.logger.Printf("kafka subscribe has stopped\n")
 				return
 			case consumeErr := <-consumerGroup.Errors():
 				k.logger.Printf("kafka received topics:%v group_id:%v handler msg err:%v\n",
@@ -256,9 +286,87 @@ func (k *kafkaImpl) gracefulStop(ctx context.Context) {
 
 	select {
 	case <-done:
+		k.logger.Printf("subscribe msg shutting down\n")
 	case <-ctx.Done():
-		k.logger.Printf("graceful shutdown timeout")
+		k.logger.Printf("graceful shutdown timeout\n")
+	}
+}
+
+// configureKafkaSecurity configures SASL and TLS based on Options.
+func configureKafkaSecurity(config *sarama.Config, opt broker.Options) error {
+	protocol := strings.ToUpper(strings.TrimSpace(opt.Protocol))
+	switch protocol {
+	case "SASL_PLAINTEXT":
+		return configureSASL(config, opt)
+	case "SASL_SSL":
+		// 设置tls和证书（可选）
+		if err := configureTLS(config, opt); err != nil {
+			return err
+		}
+
+		// 设置 SASL authentication 认证
+		return configureSASL(config, opt)
+	default:
+		return fmt.Errorf("unsupported kafka protocol: %s", opt.Protocol)
+	}
+}
+
+// configureSASL configures SASL authentication.
+func configureSASL(config *sarama.Config, opt broker.Options) error {
+	if opt.User == "" {
+		return errors.New("kafka SASL user is empty")
 	}
 
-	k.logger.Printf("subscribe msg shutting down")
+	config.Net.SASL.Enable = true
+	config.Net.SASL.User = opt.User
+	config.Net.SASL.Password = opt.Password
+	config.Net.SASL.Handshake = true
+
+	mechanism := strings.ToUpper(strings.TrimSpace(opt.SASLMechanism))
+	if mechanism == "" {
+		mechanism = sarama.SASLTypePlaintext
+	}
+
+	switch mechanism {
+	case sarama.SASLTypePlaintext:
+		config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+	case sarama.SASLTypeSCRAMSHA256, sarama.SASLTypeSCRAMSHA512:
+		config.Net.SASL.Mechanism = sarama.SASLMechanism(mechanism)
+		generator, err := newSCRAMClientGenerator(mechanism)
+		if err != nil {
+			return err
+		}
+
+		config.Net.SASL.SCRAMClientGeneratorFunc = generator
+	default:
+		return fmt.Errorf("unsupported kafka sasl mechanism: %s", opt.SASLMechanism)
+	}
+
+	return nil
+}
+
+// configureTLS configures TLS for kafka connection.
+func configureTLS(config *sarama.Config, opt broker.Options) error {
+	config.Net.TLS.Enable = true
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: opt.InsecureSkipVerify,
+	}
+
+	// 证书不为空，就读取
+	if opt.CertPath != "" {
+		caCert, err := os.ReadFile(opt.CertPath)
+		if err != nil {
+			return fmt.Errorf("failed to read kafka cert file:%s err:%w", opt.CertPath, err)
+		}
+
+		certPool := x509.NewCertPool()
+		if !certPool.AppendCertsFromPEM(caCert) {
+			return fmt.Errorf("failed to append kafka cert from %s", opt.CertPath)
+		}
+
+		tlsConfig.RootCAs = certPool
+	}
+
+	config.Net.TLS.Config = tlsConfig
+	return nil
 }

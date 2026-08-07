@@ -134,7 +134,7 @@ func (p *pulsarImpl) Publish(ctx context.Context, topic string, msg interface{},
 	return nil
 }
 
-// Subscribe subscribe message
+// Subscribe for sub message
 func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string,
 	handler broker.SubHandler, opts ...broker.SubOption) error {
 	opt := broker.SubscribeOptions{
@@ -193,6 +193,7 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 							p.logger.Printf("received topic:%v channel:%v handler msg err:%v\n", topic, opt.Name, err)
 						}
 					case <-p.stop:
+						p.logger.Printf("received topic:%v channel:%v stop\n", topic, opt.Name)
 						return
 					}
 				}
@@ -205,22 +206,28 @@ func (p *pulsarImpl) Subscribe(ctx context.Context, topic string, channel string
 					for {
 						select {
 						case <-p.stop:
+							p.logger.Printf("received topic:%v channel:%v stop\n", topic, opt.Name)
 							return
 						case cm := <-msgChannel:
 							msg := cm.Message
-							if err := p.consumerMsg(ctx, topic, opt.Name, msg, handler); err != nil {
+							if consumeErr := p.consumerMsg(ctx, topic, opt.Name, msg, handler); consumeErr != nil {
 								p.logger.Printf("received topic:%v channel:%v handler msg err:%v\n",
-									topic, opt.Name, err)
+									topic, opt.Name, consumeErr)
 								continue
 							}
 
-							consumer.Ack(msg)
+							// commit ack
+							if ackErr := consumer.Ack(msg); ackErr != nil {
+								p.logger.Printf("failed to ack msg topic:%v channel:%v handler msg err:%v\n",
+									topic, opt.Name, ackErr)
+							}
 						}
 					}
 				} else {
 					for {
 						select {
 						case <-p.stop:
+							p.logger.Printf("received topic:%v channel:%v stop\n", topic, opt.Name)
 							return
 						default:
 							if err := p.handler(ctx, topic, opt.Name, consumer, handler); err != nil {
@@ -262,7 +269,10 @@ func (p *pulsarImpl) handler(ctx context.Context, topic string, channel string,
 	}
 
 	// send ack
-	consumer.Ack(msg)
+	err = consumer.Ack(msg)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -299,12 +309,11 @@ func (p *pulsarImpl) gracefulStop(ctx context.Context) {
 		defer close(done)
 		p.client.Close()
 	}()
-
+	
 	select {
 	case <-done:
+		p.logger.Printf("subscribe msg shutting down\n")
 	case <-ctx.Done():
 		p.logger.Printf("graceful shutdown timeout")
 	}
-
-	p.logger.Printf("subscribe msg shutting down\n")
 }

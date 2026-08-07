@@ -2,3 +2,5 @@
 *.log
 dockerconfig/kafka
 dockerconfig/zookeeper
+.claude
+*.exe

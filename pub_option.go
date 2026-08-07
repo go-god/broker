@@ -38,6 +38,9 @@ type PublishOptions struct {
 	// Send and SendAsync returns an error after timeout.
 	// Default is 30 seconds, negative such as -1 to disable.
 	SendTimeout time.Duration
+
+	// kafka headers
+	Headers []RecordHeader
 }
 
 // WithPublishDelay set publish delay time
